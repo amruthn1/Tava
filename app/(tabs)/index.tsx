@@ -6,7 +6,7 @@ import Mapbox from "@rnmapbox/maps";
 import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc } from "firebase/firestore";
 import { auth } from "@/constants/firebase";
 import { useEffect, useRef, useState } from "react";
-import { Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View, Keyboard, StatusBar } from "react-native";
+import { Alert, Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View, Keyboard, StatusBar } from "react-native";
 import CreateEventPopup from '@/components/CreateEventPopup';
 
 // Reusable Pin component: uses react-native-svg when available, falls back to a styled View
@@ -173,13 +173,38 @@ export default function HomeScreen() {
     try {
       const user = auth.currentUser;
       const event = events.find(e => e.id === eventId);
-      if (user && event && event.creatorId === user.uid) {
-        await deleteDoc(doc(db, "events", eventId));
-      } else {
-        console.warn("User not authorized to delete this event");
+      
+      if (!user || !event || event.creatorId !== user.uid) {
+        Alert.alert('Unauthorized', 'You can only delete events you created.');
+        return;
       }
+
+      Alert.alert(
+        'Delete Event',
+        `Are you sure you want to delete "${event.eventType}"? This action cannot be undone.`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await deleteDoc(doc(db, "events", eventId));
+                Alert.alert('Success', 'Event deleted successfully.');
+              } catch (error) {
+                console.error("Error removing document: ", error);
+                Alert.alert('Error', 'Failed to delete event. Please try again.');
+              }
+            },
+          },
+        ]
+      );
     } catch (error) {
-      console.error("Error removing document: ", error);
+      console.error("Error in handleDelete: ", error);
+      Alert.alert('Error', 'An unexpected error occurred.');
     }
   };
 
