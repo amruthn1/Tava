@@ -1,17 +1,17 @@
 export default ({ config }) => ({
   ...config,
   expo: {
-    name: "hello-world-app",
-    slug: "hello-world-app",
+    name: "tava",
+    slug: "tava",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
-    scheme: "helloworldappappapp",
+    scheme: "tava",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.anadimp.helloworldappappapp",
+      bundleIdentifier: "com.anadimp.tava",
     },
     android: {
       adaptiveIcon: {
@@ -22,7 +22,7 @@ export default ({ config }) => ({
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
-      package: "com.anadimp.helloworldappappapp",
+      package: "com.anadimp.tava",
     },
     web: {
       output: "static",
