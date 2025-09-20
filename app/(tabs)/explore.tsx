@@ -3,7 +3,8 @@ import { ThemedView } from '@/components/themed-view';
 import { auth, db } from '@/constants/firebase';
 import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, FlatList, Platform, SafeAreaView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Platform, SafeAreaView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 interface Event {
   id: string;
@@ -23,6 +24,21 @@ interface Event {
 
 export default function TabTwoScreen() {
   const [events, setEvents] = useState<Event[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filteredEvents, setFilteredEvents] = useState<Event[]>([]);
+
+  // Filter events based on search query
+  useEffect(() => {
+    if (searchQuery.trim() === '') {
+      setFilteredEvents(events);
+    } else {
+      const filtered = events.filter(event => 
+        event.eventType.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (event.locationName && event.locationName.toLowerCase().includes(searchQuery.toLowerCase()))
+      );
+      setFilteredEvents(filtered);
+    }
+  }, [searchQuery, events]);
 
   useEffect(() => {
     const q = query(collection(db, 'events'));
@@ -32,6 +48,7 @@ export default function TabTwoScreen() {
         eventsData.push({ id: doc.id, ...doc.data() } as Event);
       });
       setEvents(eventsData);
+      setFilteredEvents(eventsData);
     });
 
     return () => unsubscribe();
@@ -91,6 +108,11 @@ export default function TabTwoScreen() {
   };
 
   const user = auth.currentUser;
+  // Clear search query
+  const clearSearch = () => {
+    setSearchQuery('');
+  };
+
   const renderItem = ({ item }: { item: Event }) => {
     const userHasRSVPd = item.rsvps?.includes(user?.uid || '') || false;
     const isCreator = user && item.creatorId === user.uid;
@@ -152,14 +174,41 @@ export default function TabTwoScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ThemedView style={styles.container}>
-        <ThemedText type="title" style={styles.title}>
-          Explore Events
-        </ThemedText>
+        <View style={styles.headerContainer}>
+          <ThemedText type="title" style={styles.title}>
+            Explore Events
+          </ThemedText>
+          <View style={styles.searchContainer}>
+            <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search events or locations..."
+              placeholderTextColor="#999"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              clearButtonMode="while-editing"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={clearSearch} style={styles.clearButton}>
+                <Ionicons name="close-circle" size={18} color="#999" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
         <FlatList
-          data={events}
+          data={filteredEvents}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
           style={styles.list}
+          ListEmptyComponent={
+            <ThemedView style={styles.emptyState}>
+              <ThemedText style={styles.emptyStateText}>
+                {searchQuery 
+                  ? 'No events match your search.'
+                  : 'No events available.'}
+              </ThemedText>
+            </ThemedView>
+          }
         />
   {/* AIChatbot intentionally removed from Explore tab to avoid showing modal here */}
       </ThemedView>
@@ -174,6 +223,42 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 20,
+  },
+  headerContainer: {
+    marginBottom: 15,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  searchIcon: {
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    color: 'white',
+    height: 45,
+    fontSize: 15,
+  },
+  clearButton: {
+    padding: 5,
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyStateText: {
+    color: '#888',
+    textAlign: 'center',
+    fontSize: 16,
   },
   title: {
     marginTop: Platform.OS === 'ios' ? 10 : 20,
