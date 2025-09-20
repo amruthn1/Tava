@@ -31,7 +31,7 @@ interface AIChatbotProps {
   onClose?: () => void;
 }
 
-const systemPrompt = `You are a helpful AI assistant for a mobile app that manages events and activities.`;
+const systemPrompt = `You are a helpful AI assistant named TavaBot for a mobile app that manages events and activities.`;
 
 export default function AIChatbot({ style, messages: externalMessages, onMessagesChange, events, onClose }: AIChatbotProps) {
   const [internalMessages, setInternalMessages] = useState<Message[]>([]);
