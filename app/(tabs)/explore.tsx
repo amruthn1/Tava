@@ -3,9 +3,9 @@ import { ThemedView } from '@/components/themed-view';
 import { auth, db } from '@/constants/firebase';
 import { Ionicons } from '@expo/vector-icons';
 import { onAuthStateChanged } from 'firebase/auth';
-import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc, Timestamp } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { Alert, FlatList, Platform, SafeAreaView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Platform, SafeAreaView, StyleSheet, TextInput, TouchableOpacity, View, Linking } from 'react-native';
 
 interface Event {
   id: string;
@@ -21,6 +21,8 @@ interface Event {
   creatorId: string;
   rsvps?: string[]; // Array of user IDs who have RSVP'd
   maxAttendees?: number;
+  eventDate?: Date; // Date and time when the event will occur
+  isActive?: boolean; // Whether the event is currently active or scheduled for future
 }
 
 export default function TabTwoScreen() {
@@ -28,6 +30,7 @@ export default function TabTwoScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredEvents, setFilteredEvents] = useState<Event[]>([]);
   const [user, setUser] = useState(auth.currentUser);
+  const [sortFilter, setSortFilter] = useState<'all' | 'active' | 'future'>('all');
 
   // Listen to auth state changes
   useEffect(() => {
@@ -37,25 +40,68 @@ export default function TabTwoScreen() {
     return unsubscribe;
   }, []);
 
-  // Filter events based on search query
+  // Helper function to determine if event is active or future
+  const isEventActive = (event: Event) => {
+    if (event.isActive === false) return false; // Explicitly scheduled for future
+    if (!event.eventDate) return true; // No date set, assume active
+    return new Date(event.eventDate) <= new Date(); // Past or current time = active
+  };
+
+  // Filter events based on search query and sort filter
   useEffect(() => {
-    if (searchQuery.trim() === '') {
-      setFilteredEvents(events);
-    } else {
-      const filtered = events.filter(event => 
+    let filtered = events;
+    
+    // Apply search filter
+    if (searchQuery.trim() !== '') {
+      filtered = filtered.filter(event => 
         event.eventType.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (event.locationName && event.locationName.toLowerCase().includes(searchQuery.toLowerCase()))
       );
-      setFilteredEvents(filtered);
     }
-  }, [searchQuery, events]);
+    
+    // Apply sort filter
+    if (sortFilter === 'active') {
+      filtered = filtered.filter(event => isEventActive(event));
+    } else if (sortFilter === 'future') {
+      filtered = filtered.filter(event => !isEventActive(event));
+    }
+    
+    // Sort by date - future events by event date, active events by creation date
+    filtered.sort((a, b) => {
+      const aIsActive = isEventActive(a);
+      const bIsActive = isEventActive(b);
+      
+      if (aIsActive && bIsActive) {
+        // Both active - sort by creation date (newest first)
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      } else if (!aIsActive && !bIsActive) {
+        // Both future - sort by event date (soonest first)
+        const aDate = a.eventDate ? new Date(a.eventDate) : new Date(a.createdAt);
+        const bDate = b.eventDate ? new Date(b.eventDate) : new Date(b.createdAt);
+        return aDate.getTime() - bDate.getTime();
+      } else {
+        // Mixed - active events first
+        return aIsActive ? -1 : 1;
+      }
+    });
+    
+    setFilteredEvents(filtered);
+  }, [searchQuery, events, sortFilter]);
 
   useEffect(() => {
     const q = query(collection(db, 'events'));
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const eventsData: Event[] = [];
       querySnapshot.forEach((doc) => {
-        eventsData.push({ id: doc.id, ...doc.data() } as Event);
+        const data = doc.data();
+        // Convert Firestore Timestamps to JavaScript Dates
+        const event = {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : data.createdAt,
+          eventDate: data.eventDate instanceof Timestamp ? data.eventDate.toDate() : data.eventDate,
+        } as Event;
+        eventsData.push(event);
       });
       setEvents(eventsData);
       setFilteredEvents(eventsData);
@@ -121,57 +167,117 @@ export default function TabTwoScreen() {
     setSearchQuery('');
   };
 
+  // Open location in maps
+  const openInMaps = (event: Event) => {
+    const { latitude, longitude } = event.location;
+    const label = event.locationName || event.eventType;
+    const url = Platform.select({
+      ios: `maps:0,0?q=${label}@${latitude},${longitude}`,
+      android: `geo:0,0?q=${latitude},${longitude}(${label})`,
+    });
+    
+    if (url) {
+      Linking.openURL(url).catch(() => {
+        // Fallback to Google Maps web
+        Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`);
+      });
+    }
+  };
+
+  // Format date for display
+  const formatEventDate = (date: Date) => {
+    const now = new Date();
+    const eventDate = new Date(date);
+    const diffTime = eventDate.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) {
+      return `Today at ${eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else if (diffDays === 1) {
+      return `Tomorrow at ${eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else if (diffDays > 1 && diffDays <= 7) {
+      return `${eventDate.toLocaleDateString([], { weekday: 'long' })} at ${eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else {
+      return eventDate.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ` at ${eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+  };
+
   const renderItem = ({ item }: { item: Event }) => {
     const userHasRSVPd = item.rsvps?.includes(user?.uid || '') || false;
     const isCreator = user && item.creatorId === user.uid;
     const rsvpCount = item.rsvps?.length || 0;
+    const eventIsActive = isEventActive(item);
     
     return (
-      <ThemedView style={styles.itemContainer}>
-        <ThemedText type="defaultSemiBold" style={styles.eventTitle}>{item.eventType}</ThemedText>
+      <ThemedView style={styles.minimalCard}>
+        {/* Header with event name and status */}
+        <View style={styles.cardHeader}>
+          <View style={styles.titleContainer}>
+            <ThemedText type="defaultSemiBold" style={styles.eventTitle}>{item.eventType}</ThemedText>
+            <View style={[styles.statusBadge, eventIsActive ? styles.activeBadge : styles.futureBadge]}>
+              <ThemedText style={styles.statusText}>
+                {eventIsActive ? 'ACTIVE' : 'FUTURE'}
+              </ThemedText>
+            </View>
+          </View>
+        </View>
         
-        {item.locationName && (
-          <ThemedText style={styles.locationName}>📍 {item.locationName}</ThemedText>
+        {/* Event timing */}
+        {!eventIsActive && item.eventDate && (
+          <ThemedText style={styles.eventTiming}>
+            🕒 {formatEventDate(item.eventDate)}
+          </ThemedText>
         )}
         
-        <ThemedText style={styles.eventDetail}>Expected People: {item.numPeople}</ThemedText>
+        {/* Location and RSVP info in one line */}
+        <View style={styles.infoRow}>
+          <TouchableOpacity onPress={() => openInMaps(item)} style={styles.locationInfo}>
+            <Ionicons name="location" size={14} color="#007AFF" />
+            <ThemedText style={styles.locationText} numberOfLines={1}>
+              {item.locationName || 'View Location'}
+            </ThemedText>
+          </TouchableOpacity>
+          
+          <ThemedText style={styles.rsvpInfo}>
+            {rsvpCount} RSVP{rsvpCount !== 1 ? 's' : ''}
+            {item.maxAttendees ? `/${item.maxAttendees}` : ''}
+          </ThemedText>
+        </View>
         
-        {item.description && (
-          <ThemedText style={styles.description}>{item.description}</ThemedText>
-        )}
-        
-        <ThemedText style={styles.eventDetail}>
-          RSVPs: {rsvpCount}{item.maxAttendees ? `/${item.maxAttendees}` : ''}
-        </ThemedText>
-        
-        <ThemedText style={styles.coordinates}>
-          Location: {item.location.latitude.toFixed(4)}, {item.location.longitude.toFixed(4)}
-        </ThemedText>
-        
-        <View style={styles.buttonContainer}>
+        {/* Action buttons */}
+        <View style={styles.minimalButtonContainer}>
           {user && (
             <TouchableOpacity 
               onPress={() => handleRSVP(item.id)} 
               style={[
-                styles.rsvpButton,
+                styles.minimalRsvpButton,
                 userHasRSVPd ? styles.rsvpButtonActive : null,
                 (item.maxAttendees && rsvpCount >= item.maxAttendees && !userHasRSVPd) ? styles.rsvpButtonDisabled : null
               ]}
               disabled={item.maxAttendees ? (rsvpCount >= item.maxAttendees && !userHasRSVPd) : false}
             >
+              <Ionicons 
+                name={userHasRSVPd ? 'checkmark-circle' : 'add-circle-outline'} 
+                size={16} 
+                color={userHasRSVPd ? 'white' : '#007AFF'} 
+              />
               <ThemedText style={[
-                styles.rsvpButtonText,
+                styles.minimalButtonText,
                 userHasRSVPd && styles.rsvpButtonTextActive
               ]}>
-                {userHasRSVPd ? '✓ RSVP\'d' : 
-                 (item.maxAttendees && rsvpCount >= item.maxAttendees) ? 'Full' : 'RSVP'}
+                {userHasRSVPd ? 'RSVP\'d' : 'RSVP'}
               </ThemedText>
             </TouchableOpacity>
           )}
           
+          <TouchableOpacity onPress={() => openInMaps(item)} style={styles.mapButton}>
+            <Ionicons name="map" size={16} color="#666" />
+            <ThemedText style={styles.mapButtonText}>Map</ThemedText>
+          </TouchableOpacity>
+          
           {isCreator && (
-            <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.deleteButton}>
-              <ThemedText style={styles.deleteButtonText}>Delete</ThemedText>
+            <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.minimalDeleteButton}>
+              <Ionicons name="trash" size={16} color="#ff3b30" />
             </TouchableOpacity>
           )}
         </View>
@@ -201,6 +307,36 @@ export default function TabTwoScreen() {
                 <Ionicons name="close-circle" size={18} color="#999" />
               </TouchableOpacity>
             )}
+          </View>
+          
+          {/* Sort Filter Buttons */}
+          <View style={styles.filterContainer}>
+            <TouchableOpacity 
+              style={[styles.filterButton, sortFilter === 'all' && styles.filterButtonActive]}
+              onPress={() => setSortFilter('all')}
+            >
+              <ThemedText style={[styles.filterButtonText, sortFilter === 'all' && styles.filterButtonTextActive]}>
+                All
+              </ThemedText>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.filterButton, sortFilter === 'active' && styles.filterButtonActive]}
+              onPress={() => setSortFilter('active')}
+            >
+              <ThemedText style={[styles.filterButtonText, sortFilter === 'active' && styles.filterButtonTextActive]}>
+                Active
+              </ThemedText>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.filterButton, sortFilter === 'future' && styles.filterButtonActive]}
+              onPress={() => setSortFilter('future')}
+            >
+              <ThemedText style={[styles.filterButtonText, sortFilter === 'future' && styles.filterButtonTextActive]}>
+                Future
+              </ThemedText>
+            </TouchableOpacity>
           </View>
         </View>
         <FlatList
@@ -348,5 +484,133 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
     fontSize: 14,
+  },
+  // New minimal card styles
+  minimalCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  cardHeader: {
+    marginBottom: 8,
+  },
+  titleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 60,
+    alignItems: 'center',
+  },
+  activeBadge: {
+    backgroundColor: '#34C759',
+  },
+  futureBadge: {
+    backgroundColor: '#007AFF',
+  },
+  statusText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  eventTiming: {
+    color: '#007AFF',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  locationInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
+  },
+  locationText: {
+    color: '#007AFF',
+    fontSize: 14,
+    marginLeft: 4,
+    flex: 1,
+  },
+  rsvpInfo: {
+    color: '#ccc',
+    fontSize: 14,
+  },
+  minimalButtonContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  minimalRsvpButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 4,
+  },
+  minimalButtonText: {
+    color: '#007AFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  mapButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2a2a2a',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 4,
+  },
+  mapButtonText: {
+    color: '#666',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  minimalDeleteButton: {
+    padding: 6,
+    borderRadius: 16,
+    backgroundColor: '#2a2a2a',
+  },
+  // Filter styles
+  filterContainer: {
+    flexDirection: 'row',
+    marginBottom: 15,
+    gap: 8,
+  },
+  filterButton: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: '#2a2a2a',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  filterButtonActive: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  filterButtonText: {
+    color: '#ccc',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  filterButtonTextActive: {
+    color: 'white',
   },
 });

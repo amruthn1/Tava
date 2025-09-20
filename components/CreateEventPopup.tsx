@@ -1,9 +1,10 @@
 import { auth, db } from '@/constants/firebase';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { addDoc, collection } from 'firebase/firestore';
+import { addDoc, collection, Timestamp } from 'firebase/firestore';
 import { useState } from 'react';
-import { Alert, Modal, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Alert, Modal, StyleSheet, TextInput, TouchableOpacity, View, ScrollView, Switch } from 'react-native';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
@@ -18,6 +19,10 @@ export default function CreateEventPopup({ visible, onClose }: { visible: boolea
   const [customLatitude, setCustomLatitude] = useState('');
   const [customLongitude, setCustomLongitude] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [eventDate, setEventDate] = useState(new Date());
+  const [isScheduledEvent, setIsScheduledEvent] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
 
   const getLocation = async () => {
     let { status } = await Location.requestForegroundPermissionsAsync();
@@ -84,18 +89,27 @@ export default function CreateEventPopup({ visible, onClose }: { visible: boolea
       }
 
       const eventData: any = {
-        eventType,
-        numPeople,
+        eventType: eventType.trim(),
+        numPeople: numPeople.trim(),
         location: finalLocation,
-        createdAt: new Date(),
-        creatorId: user.uid,
+        createdAt: Timestamp.fromDate(new Date()),
+        creatorId: user.uid || auth.currentUser?.uid || 'unknown',
         rsvps: [],
+        isActive: !isScheduledEvent, // Active if not scheduled for future
       };
 
       if (description.trim()) eventData.description = description.trim();
       if (locationName.trim()) eventData.locationName = locationName.trim();
       if (maxAttendeesNum) eventData.maxAttendees = maxAttendeesNum;
+      if (isScheduledEvent && eventDate) {
+        eventData.eventDate = Timestamp.fromDate(eventDate);
+      }
 
+      console.log('Creating event with data:', eventData);
+      console.log('Current user:', user);
+      console.log('User UID:', user.uid);
+      console.log('Auth state:', auth.currentUser);
+      
       await addDoc(collection(db, 'events'), eventData);
       
       // Reset form and close popup
@@ -104,7 +118,7 @@ export default function CreateEventPopup({ visible, onClose }: { visible: boolea
       Alert.alert('Success', 'Event created successfully!');
     } catch (error) {
       console.error('Error creating event:', error);
-      Alert.alert('Error', 'Failed to create event. Please try again.');
+      Alert.alert('Error', `Failed to create event: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -118,6 +132,31 @@ export default function CreateEventPopup({ visible, onClose }: { visible: boolea
     setUseCustomLocation(false);
     setCustomLatitude('');
     setCustomLongitude('');
+    setEventDate(new Date());
+    setIsScheduledEvent(false);
+    setShowDatePicker(false);
+    setShowTimePicker(false);
+  };
+
+  const onDateChange = (event: any, selectedDate?: Date) => {
+    setShowDatePicker(false);
+    if (selectedDate) {
+      setEventDate(selectedDate);
+    }
+  };
+
+  const onTimeChange = (event: any, selectedTime?: Date) => {
+    setShowTimePicker(false);
+    if (selectedTime) {
+      const newDate = new Date(eventDate);
+      newDate.setHours(selectedTime.getHours());
+      newDate.setMinutes(selectedTime.getMinutes());
+      setEventDate(newDate);
+    }
+  };
+
+  const formatDateTime = (date: Date) => {
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
@@ -136,6 +175,7 @@ export default function CreateEventPopup({ visible, onClose }: { visible: boolea
             </TouchableOpacity>
           </View>
           
+          <ScrollView style={styles.scrollContainer}>
           <View style={styles.formContainer}>
             <TextInput
               style={styles.input}
@@ -172,38 +212,141 @@ export default function CreateEventPopup({ visible, onClose }: { visible: boolea
               onChangeText={setLocationName}
             />
             
+            <TextInput
+              style={styles.input}
+              placeholder="Max Attendees (optional)"
+              placeholderTextColor="#999"
+              keyboardType="numeric"
+              value={maxAttendees}
+              onChangeText={setMaxAttendees}
+            />
+            
+            {/* Schedule Event Toggle */}
+            <View style={styles.toggleContainer}>
+              <ThemedText style={styles.toggleLabel}>Schedule for later?</ThemedText>
+              <Switch
+                value={isScheduledEvent}
+                onValueChange={setIsScheduledEvent}
+                trackColor={{ false: '#767577', true: '#007AFF' }}
+                thumbColor={isScheduledEvent ? '#ffffff' : '#f4f3f4'}
+              />
+            </View>
+            
+            {/* Date and Time Selection */}
+            {isScheduledEvent && (
+              <View style={styles.dateTimeContainer}>
+                <TouchableOpacity 
+                  style={styles.dateTimeButton}
+                  onPress={() => setShowDatePicker(true)}
+                >
+                  <Ionicons name="calendar" size={18} color="#007AFF" style={styles.dateTimeIcon} />
+                  <ThemedText style={styles.dateTimeButtonText}>
+                    Date: {eventDate.toLocaleDateString()}
+                  </ThemedText>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.dateTimeButton}
+                  onPress={() => setShowTimePicker(true)}
+                >
+                  <Ionicons name="time" size={18} color="#007AFF" style={styles.dateTimeIcon} />
+                  <ThemedText style={styles.dateTimeButtonText}>
+                    Time: {eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </ThemedText>
+                </TouchableOpacity>
+                
+                <ThemedText style={styles.selectedDateTime}>
+                  Selected: {formatDateTime(eventDate)}
+                </ThemedText>
+              </View>
+            )}
+            
             <View style={styles.locationContainer}>
               <TouchableOpacity 
                 style={styles.locationButton}
                 onPress={getLocation}
-                disabled={isLoading}
+                disabled={isLoading || useCustomLocation}
               >
                 <Ionicons 
                   name="location" 
                   size={18} 
-                  color="#007AFF" 
+                  color={useCustomLocation ? "#666" : "#007AFF"} 
                   style={styles.locationIcon} 
                 />
-                <ThemedText style={styles.locationButtonText}>
+                <ThemedText style={[styles.locationButtonText, useCustomLocation && { color: '#666' }]}>
                   {isLoading ? 'Getting Location...' : 'Use Current Location'}
                 </ThemedText>
               </TouchableOpacity>
               
-              {location && (
+              {location && !useCustomLocation && (
                 <ThemedText style={styles.locationText}>
                   {location.coords.latitude.toFixed(4)}, {location.coords.longitude.toFixed(4)}
                 </ThemedText>
               )}
+              
+              {/* Custom Location Toggle */}
+              <View style={styles.toggleContainer}>
+                <ThemedText style={styles.toggleLabel}>Use custom location?</ThemedText>
+                <Switch
+                  value={useCustomLocation}
+                  onValueChange={setUseCustomLocation}
+                  trackColor={{ false: '#767577', true: '#007AFF' }}
+                  thumbColor={useCustomLocation ? '#ffffff' : '#f4f3f4'}
+                />
+              </View>
+              
+              {/* Custom Location Inputs */}
+              {useCustomLocation && (
+                <View style={styles.customLocationContainer}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Latitude (e.g., 40.7128)"
+                    placeholderTextColor="#999"
+                    value={customLatitude}
+                    onChangeText={setCustomLatitude}
+                    keyboardType="numeric"
+                  />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Longitude (e.g., -74.0060)"
+                    placeholderTextColor="#999"
+                    value={customLongitude}
+                    onChangeText={setCustomLongitude}
+                    keyboardType="numeric"
+                  />
+                </View>
+              )}
             </View>
             
             <TouchableOpacity 
-              style={[styles.submitButton, (!eventType || !numPeople || !location) && styles.submitButtonDisabled]}
+              style={[styles.submitButton, (!eventType || !numPeople || (!location && !useCustomLocation) || (useCustomLocation && (!customLatitude || !customLongitude))) && styles.submitButtonDisabled]}
               onPress={handleSubmit}
-              disabled={!eventType || !numPeople || !location}
+              disabled={!eventType || !numPeople || (!location && !useCustomLocation) || (useCustomLocation && (!customLatitude || !customLongitude))}
             >
               <ThemedText style={styles.submitButtonText}>Create Event</ThemedText>
             </TouchableOpacity>
           </View>
+          </ScrollView>
+          
+          {/* Date and Time Pickers */}
+          {showDatePicker && (
+            <DateTimePicker
+              value={eventDate}
+              mode="date"
+              display="default"
+              onChange={onDateChange}
+              minimumDate={new Date()}
+            />
+          )}
+          
+          {showTimePicker && (
+            <DateTimePicker
+              value={eventDate}
+              mode="time"
+              display="default"
+              onChange={onTimeChange}
+            />
+          )}
         </ThemedView>
       </View>
     </Modal>
@@ -288,5 +431,49 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+  },
+  scrollContainer: {
+    maxHeight: '80%',
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 15,
+  },
+  toggleLabel: {
+    color: 'white',
+    fontSize: 16,
+  },
+  dateTimeContainer: {
+    marginBottom: 15,
+  },
+  dateTimeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 10,
+  },
+  dateTimeIcon: {
+    marginRight: 10,
+  },
+  dateTimeButtonText: {
+    color: '#007AFF',
+    fontSize: 16,
+  },
+  selectedDateTime: {
+    color: '#999',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 10,
+    fontStyle: 'italic',
+  },
+  customLocationContainer: {
+    marginTop: 10,
   },
 });
