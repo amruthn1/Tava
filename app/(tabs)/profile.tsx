@@ -1,12 +1,12 @@
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { clearCredentials } from '@/constants/credentialStore';
 import { auth, db } from '@/constants/firebase';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { signOut, User } from 'firebase/auth';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { Alert, Button, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Event {
@@ -81,8 +81,9 @@ export default function ProfileScreen() {
 
   const handleSignOut = async () => {
     try {
-      await signOut(auth);
-      await AsyncStorage.removeItem('cachedUid');
+    await signOut(auth);
+    // Clear manually stored credentials used for silent re-auth
+    await clearCredentials();
       // Navigate to signed-out confirmation screen
       router.replace('/(auth)/signed-out');
     } catch (e: any) {

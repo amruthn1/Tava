@@ -1,6 +1,6 @@
+import { saveCredentials } from '@/constants/credentialStore';
 import { auth } from '@/constants/firebase';
 import { Colors } from '@/constants/theme';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useState } from 'react';
@@ -18,13 +18,10 @@ export default function SignInScreen() {
   const handleSignIn = async () => {
     setIsLoading(true);
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      // cache uid so layout can avoid transient redirect
-      try {
-        await AsyncStorage.setItem('cachedUid', cred.user.uid);
-      } catch (e) {
-        console.warn('Failed to cache uid after sign-in', e);
-      }
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+      // Persist credentials securely so we can silently re-auth on cold start
+      // (Fallback approach because native persistence helper is unavailable)
+      await saveCredentials(email.trim(), password);
       router.replace('/(tabs)'); // Navigate to main app
     } catch (error: any) {
       Alert.alert('Login Failed', error.message);
