@@ -49,6 +49,7 @@ export default ({ config }) => ({
           RNMapboxMapsDownloadToken: process.env.EXPO_PUBLIC_MAPBOX_TOKEN,
         },
       ],
+      "expo-secure-store"
     ],
     experiments: {
       typedRoutes: true,

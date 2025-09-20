@@ -1,8 +1,10 @@
-// Import the functions you need from the SDKs you need
-import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
+// Firebase Web SDK with React Native persistence (no react-native-firebase dependency)
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getApp, getApps, initializeApp } from 'firebase/app';
+import { getAuth, initializeAuth, signInWithEmailAndPassword, type Auth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { loadCredentials } from './credentialStore';
 
 // https://firebase.google.com/docs/web/setup#available-libraries
 
@@ -18,30 +20,73 @@ const firebaseConfig = {
   measurementId: Constants.expoConfig?.extra?.firebaseMeasurementId
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Initialize (or reuse) Firebase app
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 
-// Initialize Auth with React Native AsyncStorage persistence when possible.
-// This code attempts to use `firebase/auth/react-native`. If it's not
-// available (types or module resolution), we fall back to `getAuth`.
-import type { Auth } from 'firebase/auth';
+// ---------------------------------------------------------------------------
+// Auth singleton with persistence (RN) — guarded against fast refresh
+// ---------------------------------------------------------------------------
+// We store the auth instance on a global symbol so re-executing this module (Metro
+// fast refresh / HMR) won't attempt another initializeAuth (which causes assertions).
+
+const globalAny = globalThis as any;
+
+// Attempt to obtain getReactNativePersistence from main auth bundle (in some versions
+// it is exported directly; earlier TypeScript d.ts may not list it, so we access via any).
+let getRNPersist: ((storage: any) => any) | undefined;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const authPkg = require('firebase/auth');
+  if (authPkg?.getReactNativePersistence) {
+  getRNPersist = authPkg.getReactNativePersistence as (s: any) => any;
+  }
+} catch {
+  // ignore
+}
+
+// NOTE about persistence strategy:
+// In this environment the official React Native persistence helper may not be bundled.
+// When it's absent we fall back to a volatile in-memory auth session. To still provide a
+// "stay signed in" experience across cold app launches, the app stores (email,password)
+// in `expo-secure-store` after explicit sign-in/sign-up and calls `autoSignInIfNeeded()`
+// on startup to reauthenticate with those credentials. This is a pragmatic workaround;
+// if the official RN persistence becomes available, initializeAuth with persistence will
+// handle session restoration automatically and the credential-based fallback will still
+// be harmless (auth.currentUser will already be set so autoSignInIfNeeded is a no-op).
 
 let auth: Auth;
-try {
-  // Dynamic require to avoid static import/type resolution issues in web builds
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const rnAuth = require('firebase/auth/react-native');
-  auth = rnAuth.initializeAuth(app, {
-    persistence: rnAuth.getReactNativePersistence(ReactNativeAsyncStorage),
-  });
-} catch (e) {
-  // Fallback: use getAuth for environments where react-native persistence isn't available
-  // (e.g., web or missing types). getAuth will provide browser/node persistence.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getAuth: _getAuth } = require('firebase/auth');
-  auth = _getAuth(app);
+if (!globalAny.__TAVA_AUTH__) {
+  try {
+    if (getRNPersist) {
+      auth = initializeAuth(app, { persistence: getRNPersist(AsyncStorage) });
+      console.log('[Firebase] Auth initialized with official RN persistence');
+    } else {
+      auth = initializeAuth(app, {}); // volatile session
+      console.warn('[Firebase] RN persistence helper unavailable; using volatile auth (no cold-start restore)');
+    }
+  } catch (e) {
+    console.warn('[Firebase] initializeAuth failed, falling back to volatile getAuth()', e);
+    auth = getAuth(app);
+  }
+  globalAny.__TAVA_AUTH__ = auth;
+} else {
+  auth = globalAny.__TAVA_AUTH__ as Auth;
 }
 
 export { auth, db };
+
+// Attempt silent credential-based sign-in if currentUser is null.
+export async function autoSignInIfNeeded(): Promise<boolean> {
+  if (auth.currentUser) return true;
+  const creds = await loadCredentials();
+  if (!creds) return false;
+  try {
+    await signInWithEmailAndPassword(auth, creds.email, creds.password);
+    return true;
+  } catch (e) {
+    console.warn('[Auth] autoSignIn failed', e);
+    return false;
+  }
+}
 

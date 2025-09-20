@@ -1,9 +1,8 @@
 
-import { auth } from '@/constants/firebase';
+import { auth, autoSignInIfNeeded } from '@/constants/firebase';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
@@ -18,8 +17,10 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
   // undefined = loading, null = no user, User = signed-in
   const [user, setUser] = useState<User | null | undefined>(undefined);
-  const [cachedUidExists, setCachedUidExists] = useState<boolean | undefined>(undefined);
   const [redirectingToSignIn, setRedirectingToSignIn] = useState(false);
+  const [attemptedAutoSignIn, setAttemptedAutoSignIn] = useState(false);
+  const [autoSignInInProgress, setAutoSignInInProgress] = useState(false);
+  const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
@@ -30,18 +31,7 @@ export default function RootLayout() {
       console.log('[Auth] onAuthStateChanged fired, user =', firebaseUser ? firebaseUser.uid : null);
       // Set user from firebase
       setUser(firebaseUser);
-      try {
-        // store UID as a lightweight fallback so app can avoid showing sign-in briefly
-        // Note: DO NOT remove the cachedUid here if firebase emits null transiently —
-        // only write the cached UID when we actually have a firebaseUser. Explicit
-        // sign-out will clear the cached UID (Profile screen handles that).
-        if (firebaseUser) {
-          await AsyncStorage.setItem('cachedUid', firebaseUser.uid);
-        }
-      } catch (e) {
-        // ignore storage errors
-        console.warn('AsyncStorage error caching uid', e);
-      }
+      // (Removed cachedUid persistence; rely on Firebase custom persistence now)
     });
 
     return () => {
@@ -50,61 +40,46 @@ export default function RootLayout() {
     };
   }, []);
 
-  // Read cachedUid once on mount so we don't race with onAuthStateChanged
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const cached = await AsyncStorage.getItem('cachedUid');
-        console.log('[Auth] cachedUid read on mount =', cached);
-        if (!mounted) return;
-        setCachedUidExists(!!cached);
-      } catch (e) {
-        console.warn('[Auth] error reading cachedUid', e);
-        if (!mounted) return;
-        setCachedUidExists(false);
+    // Auth flow state machine:
+    // 1. Wait for user !== undefined
+    // 2. If user present -> nothing to do
+    // 3. If user null and we have not attempted silent sign-in -> attempt
+    // 4. After attempt (failed) and still null -> single redirect to sign-in (if not already there)
+    if (user === undefined) return; // still loading initial state
+
+    // If we already have a user, ensure flags reflect completion
+    if (user) {
+      if (autoSignInInProgress) setAutoSignInInProgress(false);
+      if (!attemptedAutoSignIn) setAttemptedAutoSignIn(true);
+      return;
+    }
+
+    // user is null here
+    const doAuto = async () => {
+      if (!attemptedAutoSignIn && !autoSignInInProgress) {
+        setAutoSignInInProgress(true);
+        const ok = await autoSignInIfNeeded();
+        setAutoSignInInProgress(false);
+        setAttemptedAutoSignIn(true); // mark attempt regardless of success
+        if (ok) return; // auth state listener will update user shortly
       }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
-  useEffect(() => {
-    // Wait until auth finished initializing (user !== undefined)
-    const doRedirect = async () => {
-      if (user === undefined) return;
-
-      // If user is null, use the cachedUidExists fallback to avoid races
-      if (user === null) {
-        // If we haven't yet determined whether a cached UID exists, wait.
-        if (cachedUidExists === undefined) return;
-
-        if (cachedUidExists) {
-          // keep showing the app until firebase emits a user or confirms null
-          return;
-        }
-        // Only redirect to sign-in if we're not already on an auth route
-        // expo-router's Router doesn't expose pathname; use history location as fallback
-        let path = '';
-        try {
-          path = (global as any)?.location?.pathname || '';
-        } catch (e) {
-          path = '';
-        }
-
-        if (!path.startsWith('/(auth)')) {
-          console.log('[Auth] redirecting to sign-in (no cachedUid)');
+      // After attempt, if still null and not redirecting yet, navigate to sign-in unless already on an auth route
+      if (attemptedAutoSignIn && !redirectingToSignIn && auth.currentUser == null) {
+        const onAuthRoute = pathname?.startsWith('/(auth)');
+        if (!onAuthRoute) {
+          console.log('[Auth] redirecting to sign-in (no user after auto attempt)');
           setRedirectingToSignIn(true);
           router.replace('/(auth)/sign-in');
         }
       }
     };
 
-    doRedirect();
-  }, [user, router]);
+    doAuto();
+  }, [user, attemptedAutoSignIn, autoSignInInProgress, redirectingToSignIn, pathname, router]);
 
-  if (user === undefined) {
+  if (user === undefined || (user === null && (!attemptedAutoSignIn || autoSignInInProgress))) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" />
@@ -128,7 +103,6 @@ export default function RootLayout() {
   // const debugOverlay = __DEV__ ? (
   //   <View style={{ position: 'absolute', top: 40, right: 12, backgroundColor: 'rgba(0,0,0,0.65)', padding: 8, borderRadius: 8, zIndex: 999 }}>
   //     <Text style={{ color: '#fff', fontSize: 11 }}>auth.user: {user ? (user as any).uid : String(user)}</Text>
-  //     <Text style={{ color: '#fff', fontSize: 11 }}>cachedUidExists: {String(cachedUidExists)}</Text>
   //     <Text style={{ color: '#fff', fontSize: 11 }}>redirecting: {String(redirectingToSignIn)}</Text>
   //   </View>
   // ) : null;

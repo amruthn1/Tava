@@ -1,6 +1,6 @@
+import { saveCredentials } from '@/constants/credentialStore';
 import { auth } from '@/constants/firebase';
 import { Colors } from '@/constants/theme';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { useState } from 'react';
@@ -36,12 +36,9 @@ export default function SignUpScreen() {
     
     setIsLoading(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      try {
-        await AsyncStorage.setItem('cachedUid', cred.user.uid);
-      } catch (e) {
-        console.warn('Failed to cache uid after sign-up', e);
-      }
+      await createUserWithEmailAndPassword(auth, email.trim(), password);
+      // Save credentials securely for future silent sign-in (manual persistence fallback)
+      await saveCredentials(email.trim(), password);
       router.replace('/(tabs)'); // Navigate to main app
     } catch (error: any) {
       Alert.alert('Sign Up Failed', error.message);
