@@ -15,6 +15,9 @@ type PinProps = {
   outline?: string;
 };
 
+// Safe wrapper: use Mapbox.CalloutSubview if available, otherwise fall back to TouchableOpacity
+const CalloutWrapper = ((Mapbox as any).CalloutSubview ?? TouchableOpacity) as React.ComponentType<any>;
+
 const Pin = ({ size = 36, color = '#FF3B30', outline = '#fff' }: PinProps) => {
   // Render a single Image with an inline SVG data URI so PointAnnotation
   // receives only one native subview (react-native-mapbox limitation).
@@ -294,24 +297,26 @@ export default function HomeScreen() {
                   {event.maxAttendees ? `/${event.maxAttendees}` : ''}
                 </Text>
                 <View style={styles.buttonContainer}>
-                  <TouchableOpacity 
-                    onPress={() => handleRSVP(event.id)} 
+                  <CalloutWrapper
+                    onPress={() => handleRSVP(event.id)}
                     style={[
                       styles.rsvpButton,
                       event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonActive
                     ]}
                   >
-                    <Text style={[
-                      styles.rsvpButtonText,
-                      event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive
-                    ]}>
+                    <Text
+                      style={[
+                        styles.rsvpButtonText,
+                        event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive
+                      ]}
+                    >
                       {event.rsvps?.includes(auth.currentUser?.uid || '') ? '✓ RSVP\'d' : 'RSVP'}
                     </Text>
-                  </TouchableOpacity>
+                  </CalloutWrapper>
                   {auth.currentUser?.uid === event.creatorId && (
-                    <TouchableOpacity onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
+                    <CalloutWrapper onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
                       <Text style={styles.deleteButtonText}>Delete</Text>
-                    </TouchableOpacity>
+                    </CalloutWrapper>
                   )}
                 </View>
               </View>

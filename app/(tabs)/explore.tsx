@@ -1,10 +1,11 @@
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { auth, db } from '@/constants/firebase';
-import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc } from 'firebase/firestore';
-import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, Platform, SafeAreaView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { onAuthStateChanged } from 'firebase/auth';
+import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
+import { Alert, FlatList, Platform, SafeAreaView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 
 interface Event {
   id: string;
@@ -26,6 +27,15 @@ export default function TabTwoScreen() {
   const [events, setEvents] = useState<Event[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredEvents, setFilteredEvents] = useState<Event[]>([]);
+  const [user, setUser] = useState(auth.currentUser);
+
+  // Listen to auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (authUser) => {
+      setUser(authUser);
+    });
+    return unsubscribe;
+  }, []);
 
   // Filter events based on search query
   useEffect(() => {
@@ -71,7 +81,6 @@ export default function TabTwoScreen() {
 
   const handleRSVP = async (eventId: string) => {
     try {
-      const user = auth.currentUser;
       if (!user) {
         Alert.alert('Authentication Required', 'Please sign in to RSVP to events.');
         return;
@@ -103,11 +112,10 @@ export default function TabTwoScreen() {
       }
     } catch (error) {
       console.error('Error updating RSVP: ', error);
-      Alert.alert('Error', 'Failed to update RSVP. Please try again.');
+      Alert.alert('Error', `Failed to update RSVP: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
-  const user = auth.currentUser;
   // Clear search query
   const clearSearch = () => {
     setSearchQuery('');

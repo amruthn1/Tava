@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 export default function CreateEventScreen() {
   const insets = useSafeAreaInsets();
   const [eventType, setEventType] = useState('');
+  const [numPeople, setNumPeople] = useState('');
   const [description, setDescription] = useState('');
   const [locationName, setLocationName] = useState('');
   const [maxAttendees, setMaxAttendees] = useState('');
@@ -33,6 +34,11 @@ export default function CreateEventScreen() {
     // Validate required fields
     if (!eventType) {
       Alert.alert('Missing Information', 'Please fill in the event type.');
+      return;
+    }
+    
+    if (!numPeople) {
+      Alert.alert('Missing Information', 'Please fill in the expected number of people.');
       return;
     }
 
@@ -80,6 +86,7 @@ export default function CreateEventScreen() {
 
       const eventData: any = {
         eventType,
+        numPeople,
         location: finalLocation,
         createdAt: new Date(),
         creatorId: user.uid,
@@ -97,6 +104,7 @@ export default function CreateEventScreen() {
       
       // Reset form
       setEventType('');
+      setNumPeople('');
       setDescription('');
       setLocationName('');
       setMaxAttendees('');
@@ -125,6 +133,15 @@ export default function CreateEventScreen() {
               placeholderTextColor="#999"
               value={eventType}
               onChangeText={setEventType}
+            />
+            
+            <TextInput
+              style={styles.input}
+              placeholder="Expected Number of People"
+              placeholderTextColor="#999"
+              value={numPeople}
+              onChangeText={setNumPeople}
+              keyboardType="numeric"
             />
             
             <TextInput
