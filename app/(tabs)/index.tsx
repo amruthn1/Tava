@@ -16,6 +16,9 @@ type PinProps = {
   outline?: string;
 };
 
+// Safe wrapper: use Mapbox.CalloutSubview if available, otherwise fall back to TouchableOpacity
+const CalloutWrapper = ((Mapbox as any).CalloutSubview ?? TouchableOpacity) as React.ComponentType<any>;
+
 const Pin = ({ size = 36, color = '#FF3B30', outline = '#fff' }: PinProps) => {
   // Render a single Image with an inline SVG data URI so PointAnnotation
   // receives only one native subview (react-native-mapbox limitation).
@@ -259,6 +262,7 @@ export default function HomeScreen() {
   const recenterIconSize = Math.max(width * 0.06, 20);
 
   return (
+<<<<<<< HEAD
     <View style={styles.container}>
       <StatusBar />
       <CreateEventPopup 
@@ -292,6 +296,65 @@ export default function HomeScreen() {
                   <Text style={styles.calloutText}>{event.eventType}</Text>
                   {event.locationName && (
                     <Text style={styles.calloutText}> {event.locationName}</Text>
+=======
+    <View style={styles.page}>
+      <Mapbox.MapView
+        ref={mapRef}
+        style={styles.map}
+        styleURL="mapbox://styles/rohithn1/cmfrlmj1x00g101ry1y3b63h3"
+        scaleBarEnabled={false}
+      >
+        <Mapbox.Camera
+          ref={cameraRef}
+          pitch={0}
+        />
+        <Mapbox.UserLocation visible onUpdate={onUserLocationUpdate} />
+        <Mapbox.LocationPuck visible/>
+        {events.map((event) => (
+          <Mapbox.PointAnnotation
+            key={event.id}
+            id={event.id}
+            coordinate={[event.location.longitude, event.location.latitude]}
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            {/* Marker content: use the Pin component */}
+            <Pin size={40} color="#FF3B30" outline="#ffffff" />
+            <Mapbox.Callout title={event.eventType}>
+              <View style={styles.calloutView}>
+                <Text style={styles.calloutText}>{event.eventType}</Text>
+                {event.locationName && (
+                  <Text style={styles.calloutText}>📍 {event.locationName}</Text>
+                )}
+                <Text style={styles.calloutText}>People: {event.numPeople}</Text>
+                {event.description && (
+                  <Text style={styles.calloutText}>{event.description}</Text>
+                )}
+                <Text style={styles.calloutText}>
+                  RSVPs: {event.rsvps?.length || 0}
+                  {event.maxAttendees ? `/${event.maxAttendees}` : ''}
+                </Text>
+                <View style={styles.buttonContainer}>
+                  <CalloutWrapper
+                    onPress={() => handleRSVP(event.id)}
+                    style={[
+                      styles.rsvpButton,
+                      event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonActive
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.rsvpButtonText,
+                        event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive
+                      ]}
+                    >
+                      {event.rsvps?.includes(auth.currentUser?.uid || '') ? '✓ RSVP\'d' : 'RSVP'}
+                    </Text>
+                  </CalloutWrapper>
+                  {auth.currentUser?.uid === event.creatorId && (
+                    <CalloutWrapper onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
+                      <Text style={styles.deleteButtonText}>Delete</Text>
+                    </CalloutWrapper>
+>>>>>>> main
                   )}
                   <Text style={styles.calloutText}>People: {event.numPeople}</Text>
                   {event.description && (

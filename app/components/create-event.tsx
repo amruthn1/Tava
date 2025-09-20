@@ -32,8 +32,13 @@ export default function CreateEventScreen() {
 
   const handleSubmit = async () => {
     // Validate required fields
-    if (!eventType || !numPeople) {
-      Alert.alert('Missing Information', 'Please fill in event type and number of people.');
+    if (!eventType) {
+      Alert.alert('Missing Information', 'Please fill in the event type.');
+      return;
+    }
+    
+    if (!numPeople) {
+      Alert.alert('Missing Information', 'Please fill in the expected number of people.');
       return;
     }
 
@@ -132,11 +137,11 @@ export default function CreateEventScreen() {
             
             <TextInput
               style={styles.input}
-              placeholder="Number of People Expected"
+              placeholder="Expected Number of People"
               placeholderTextColor="#999"
-              keyboardType="numeric"
               value={numPeople}
               onChangeText={setNumPeople}
+              keyboardType="numeric"
             />
             
             <TextInput
