@@ -328,25 +328,34 @@ export default function HomeScreen() {
           ))}
         </Mapbox.MapView>
       </Pressable>
-      {/* Floating Chat Button */}
-      <TouchableOpacity 
-        style={styles.chatButton}
-        onPress={() => setIsChatOpen(true)}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="chatbubbles" size={24} color="white" />
-      </TouchableOpacity>
-      {/* Create Event FAB */}
-      <TouchableOpacity 
-        style={styles.createEventButton}
-        onPress={() => setIsCreateEventVisible(true)}
-      >
-        <Ionicons name="add" size={28} color="white" />
-      </TouchableOpacity>
-      {/* Recenter Button */}
-      <TouchableOpacity style={styles.recenterButton} onPress={handleRecenter} accessibilityLabel="Recenter map">
-        <Ionicons name="locate" size={recenterIconSize} color="#fff" />
-      </TouchableOpacity>
+      {/* Stacked Buttons Container */}
+      <View style={styles.buttonStack}>
+        {/* Create Event Button */}
+        <TouchableOpacity 
+          style={[styles.createEventButton, styles.stackedButton]}
+          onPress={() => setIsCreateEventVisible(true)}
+        >
+          <Ionicons name="add" size={24} color="white" />
+        </TouchableOpacity>
+        
+        {/* AI Chat Button */}
+        <TouchableOpacity 
+          style={[styles.chatButton, styles.stackedButton]}
+          onPress={() => setIsChatOpen(true)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="chatbubbles" size={20} color="white" />
+        </TouchableOpacity>
+        
+        {/* Recenter Button */}
+        <TouchableOpacity 
+          style={[styles.recenterButton, styles.stackedButton]} 
+          onPress={handleRecenter} 
+          accessibilityLabel="Recenter map"
+        >
+          <Ionicons name="locate" size={20} color="#fff" />
+        </TouchableOpacity>
+      </View>
       {/* Chat Modal - transparent overlay, closes on outside press */}
       {isChatOpen && (
         <View style={styles.chatModalOverlay}>
@@ -377,31 +386,20 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  createEventButton: {
+  // Stacked buttons container
+  buttonStack: {
     position: 'absolute',
-    right: 20,
-    top: 60, // Position below status bar
-    backgroundColor: '#FF3B30',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
+    left: 20,
+    bottom: 30,
     alignItems: 'center',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
     zIndex: 1000,
   },
-  chatButton: {
-    position: 'absolute',
-    right: 20,
-    bottom: height * 0.05, // Match recenter button's bottom position
-    backgroundColor: '#007AFF',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+  // Base style for all stacked buttons
+  stackedButton: {
+    marginBottom: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 5,
@@ -409,7 +407,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
-    zIndex: 1000,
+  },
+  chatButton: {
+    backgroundColor: '#007AFF',
+  },
+  createEventButton: {
+    backgroundColor: '#FF3B30',
   },
   chatModalOverlay: {
     position: "absolute",
@@ -456,23 +459,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   recenterButton: {
-    position: "absolute",
-    bottom: height * 0.05,
-    left: width * 0.05,
-    width: width * 0.13,
-    height: width * 0.13,
-    borderRadius: width * 0.065,
-    padding: width * 0.03,
     backgroundColor: "#222",
-    justifyContent: "center",
-    alignItems: "center",
-    textAlign: "center",
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-    zIndex: 10,
   },
   recenterIcon: {
     fontSize: Math.max(width * 0.055, 18),
