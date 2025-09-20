@@ -1,134 +1,90 @@
 import { auth, db } from '@/constants/firebase';
 import { Ionicons } from '@expo/vector-icons';
-import * as Location from 'expo-location';
 import { addDoc, collection } from 'firebase/firestore';
 import { useState } from 'react';
-import { Alert, Modal, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { 
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View 
+} from 'react-native';
 import { ThemedText } from './themed-text';
-import { ThemedView } from './themed-view';
 
-export default function CreateEventPopup({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+interface CreateEventPopupProps {
+  visible: boolean;
+  onClose: () => void;
+}
+export default function CreateEventPopup({ visible, onClose }: CreateEventPopupProps) {
   const [eventType, setEventType] = useState('');
-  const [numPeople, setNumPeople] = useState('');
   const [description, setDescription] = useState('');
   const [locationName, setLocationName] = useState('');
   const [maxAttendees, setMaxAttendees] = useState('');
-  const [location, setLocation] = useState<Location.LocationObject | null>(null);
-  const [useCustomLocation, setUseCustomLocation] = useState(false);
-  const [customLatitude, setCustomLatitude] = useState('');
-  const [customLongitude, setCustomLongitude] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const getLocation = async () => {
-    let { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission to access location was denied');
+  const handleSubmit = async () => {
+    if (!eventType || !description) {
+      Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
 
-    setIsLoading(true);
     try {
-      let currentLocation = await Location.getCurrentPositionAsync({});
-      setLocation(currentLocation);
+      setIsLoading(true);
+      const eventData = {
+        eventType,
+        description,
+        locationName,
+        maxAttendees: maxAttendees ? parseInt(maxAttendees) : null,
+        createdBy: auth.currentUser?.uid,
+        createdAt: new Date(),
+      };
+
+      await addDoc(collection(db, 'events'), eventData);
+      onClose();
+      resetForm();
     } catch (error) {
-      Alert.alert('Error', 'Failed to get current location');
+      console.error('Error creating event:', error);
+      Alert.alert('Error', 'Failed to create event');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSubmit = async () => {
-    if (!eventType || !numPeople) {
-      Alert.alert('Missing Information', 'Please fill in event type and number of people.');
-      return;
-    }
-
-    let finalLocation;
-    if (useCustomLocation) {
-      if (!customLatitude || !customLongitude) {
-        Alert.alert('Missing Location', 'Please enter both latitude and longitude for custom location.');
-        return;
-      }
-      const lat = parseFloat(customLatitude);
-      const lng = parseFloat(customLongitude);
-      if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        Alert.alert('Invalid Location', 'Please enter valid latitude (-90 to 90) and longitude (-180 to 180).');
-        return;
-      }
-      finalLocation = { latitude: lat, longitude: lng };
-    } else {
-      if (!location) {
-        Alert.alert('Missing Location', 'Please get your current location or use custom location.');
-        return;
-      }
-      finalLocation = {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      };
-    }
-
-    let maxAttendeesNum = undefined;
-    if (maxAttendees) {
-      maxAttendeesNum = parseInt(maxAttendees);
-      if (isNaN(maxAttendeesNum) || maxAttendeesNum < 1) {
-        Alert.alert('Invalid Max Attendees', 'Please enter a valid number for max attendees.');
-        return;
-      }
-    }
-
-    try {
-      const user = auth.currentUser;
-      if (!user) {
-        Alert.alert('Authentication Error', 'Please sign in to create an event.');
-        return;
-      }
-
-      const eventData: any = {
-        eventType,
-        numPeople,
-        location: finalLocation,
-        createdAt: new Date(),
-        creatorId: user.uid,
-        rsvps: [],
-      };
-
-      if (description.trim()) eventData.description = description.trim();
-      if (locationName.trim()) eventData.locationName = locationName.trim();
-      if (maxAttendeesNum) eventData.maxAttendees = maxAttendeesNum;
-
-      await addDoc(collection(db, 'events'), eventData);
-      
-      // Reset form and close popup
-      resetForm();
-      onClose();
-      Alert.alert('Success', 'Event created successfully!');
-    } catch (error) {
-      console.error('Error creating event:', error);
-      Alert.alert('Error', 'Failed to create event. Please try again.');
-    }
-  };
-
   const resetForm = () => {
     setEventType('');
-    setNumPeople('');
     setDescription('');
     setLocationName('');
     setMaxAttendees('');
-    setLocation(null);
-    setUseCustomLocation(false);
-    setCustomLatitude('');
-    setCustomLongitude('');
   };
+
+  if (!visible) return null;
 
   return (
     <Modal
       visible={visible}
       animationType="slide"
       transparent={true}
+      statusBarTranslucent={true}
       onRequestClose={onClose}
+      style={{ margin: 0 }}
     >
-      <View style={styles.modalOverlay}>
-        <ThemedView style={styles.modalContent}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        style={styles.container}
+        enabled={false}
+      >
+        <TouchableWithoutFeedback onPress={onClose}>
+          <View style={styles.overlay} />
+        </TouchableWithoutFeedback>
+        
+        <View style={styles.content}>
           <View style={styles.modalHeader}>
             <ThemedText type="title" style={styles.modalTitle}>Create Event</ThemedText>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -136,116 +92,164 @@ export default function CreateEventPopup({ visible, onClose }: { visible: boolea
             </TouchableOpacity>
           </View>
           
-          <View style={styles.formContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder="Event Type (e.g., Basketball)"
-              placeholderTextColor="#999"
-              value={eventType}
-              onChangeText={setEventType}
-            />
-            
-            <TextInput
-              style={styles.input}
-              placeholder="Number of People"
-              placeholderTextColor="#999"
-              keyboardType="numeric"
-              value={numPeople}
-              onChangeText={setNumPeople}
-            />
-            
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              placeholder="Description (optional)"
-              placeholderTextColor="#999"
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              numberOfLines={3}
-            />
-            
-            <TextInput
-              style={styles.input}
-              placeholder="Location Name (e.g., Central Park)"
-              placeholderTextColor="#999"
-              value={locationName}
-              onChangeText={setLocationName}
-            />
-            
-            <View style={styles.locationContainer}>
-              <TouchableOpacity 
-                style={styles.locationButton}
-                onPress={getLocation}
-                disabled={isLoading}
-              >
-                <Ionicons 
-                  name="location" 
-                  size={18} 
-                  color="#007AFF" 
-                  style={styles.locationIcon} 
-                />
-                <ThemedText style={styles.locationButtonText}>
-                  {isLoading ? 'Getting Location...' : 'Use Current Location'}
-                </ThemedText>
-              </TouchableOpacity>
-              
-              {location && (
-                <ThemedText style={styles.locationText}>
-                  {location.coords.latitude.toFixed(4)}, {location.coords.longitude.toFixed(4)}
-                </ThemedText>
-              )}
+          <ScrollView 
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollViewContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            bounces={true}
+            alwaysBounceVertical={false}
+            showsVerticalScrollIndicator={true}
+            overScrollMode="always"
+            nestedScrollEnabled={true}
+            contentInsetAdjustmentBehavior="never"
+          >
+            <View style={styles.formGroup}>
+              <ThemedText style={styles.label}>Event Type *</ThemedText>
+              <TextInput
+                style={styles.input}
+                value={eventType}
+                onChangeText={setEventType}
+                placeholder="e.g., Basketball, Soccer, etc."
+                placeholderTextColor="#888"
+              />
             </View>
-            
+
+            <View style={styles.formGroup}>
+              <ThemedText style={styles.label}>Description *</ThemedText>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Add details about the event"
+                placeholderTextColor="#888"
+                multiline
+                numberOfLines={4}
+              />
+            </View>
+
+            <View style={styles.formGroup}>
+              <ThemedText style={styles.label}>Location Name</ThemedText>
+              <TextInput
+                style={styles.input}
+                value={locationName}
+                onChangeText={setLocationName}
+                placeholder="e.g., Central Park, Court #5"
+                placeholderTextColor="#888"
+              />
+            </View>
+
+            <View style={styles.formGroup}>
+              <ThemedText style={styles.label}>Max Attendees</ThemedText>
+              <TextInput
+                style={styles.input}
+                value={maxAttendees}
+                onChangeText={setMaxAttendees}
+                placeholder="Leave empty for no limit"
+                placeholderTextColor="#888"
+                keyboardType="numeric"
+              />
+            </View>
+
             <TouchableOpacity 
-              style={[styles.submitButton, (!eventType || !numPeople || !location) && styles.submitButtonDisabled]}
+              style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
               onPress={handleSubmit}
-              disabled={!eventType || !numPeople || !location}
+              disabled={isLoading}
             >
-              <ThemedText style={styles.submitButtonText}>Create Event</ThemedText>
+              <ThemedText style={styles.submitButtonText}>
+                {isLoading ? 'Creating...' : 'Create Event'}
+              </ThemedText>
             </TouchableOpacity>
-          </View>
-        </ThemedView>
-      </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  modalOverlay: {
+  container: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    backgroundColor: 'transparent',
   },
-  modalContent: {
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    zIndex: 1001,
+  },
+  content: {
     backgroundColor: '#1e1e1e',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: '80%',
+    height: '90%',
+    width: '100%',
+    zIndex: 1002,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    padding: 20,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: '600',
+    color: '#fff',
   },
   closeButton: {
     padding: 8,
   },
-  formContainer: {
-    paddingBottom: 20,
+  scrollView: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#1e1e1e',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  scrollViewContent: {
+    padding: 20,
+    paddingBottom: 300, // Extra space at the bottom
+    paddingTop: 10,
+    minHeight: '100%',
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+  },
+  formGroup: {
+    marginBottom: 20,
+  },
+  label: {
+    marginBottom: 8,
+    fontSize: 14,
+    color: '#999',
   },
   input: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#2c2c2e',
     borderRadius: 10,
     padding: 15,
-    marginBottom: 15,
-    color: 'white',
+    color: '#fff',
     fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#444',
+    width: '100%',
   },
   textArea: {
     minHeight: 100,
@@ -279,13 +283,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 15,
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 20,
   },
   submitButtonDisabled: {
-    opacity: 0.5,
+    opacity: 0.6,
   },
   submitButtonText: {
-    color: 'white',
+    color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },

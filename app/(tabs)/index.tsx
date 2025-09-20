@@ -412,6 +412,8 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    position: 'relative',
+    zIndex: 1,
   },
   map: {
     flex: 1,
