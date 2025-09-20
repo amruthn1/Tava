@@ -7,7 +7,7 @@ import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import 'react-native-reanimated';
 
 export const unstable_settings = {
@@ -125,19 +125,19 @@ export default function RootLayout() {
   );
 
   // Dev overlay to help diagnose auth restoration issues
-  const debugOverlay = __DEV__ ? (
-    <View style={{ position: 'absolute', top: 40, right: 12, backgroundColor: 'rgba(0,0,0,0.65)', padding: 8, borderRadius: 8, zIndex: 999 }}>
-      <Text style={{ color: '#fff', fontSize: 11 }}>auth.user: {user ? (user as any).uid : String(user)}</Text>
-      <Text style={{ color: '#fff', fontSize: 11 }}>cachedUidExists: {String(cachedUidExists)}</Text>
-      <Text style={{ color: '#fff', fontSize: 11 }}>redirecting: {String(redirectingToSignIn)}</Text>
-    </View>
-  ) : null;
+  // const debugOverlay = __DEV__ ? (
+  //   <View style={{ position: 'absolute', top: 40, right: 12, backgroundColor: 'rgba(0,0,0,0.65)', padding: 8, borderRadius: 8, zIndex: 999 }}>
+  //     <Text style={{ color: '#fff', fontSize: 11 }}>auth.user: {user ? (user as any).uid : String(user)}</Text>
+  //     <Text style={{ color: '#fff', fontSize: 11 }}>cachedUidExists: {String(cachedUidExists)}</Text>
+  //     <Text style={{ color: '#fff', fontSize: 11 }}>redirecting: {String(redirectingToSignIn)}</Text>
+  //   </View>
+  // ) : null;
 
   return (
     <ThemeProvider value={theme}>
       <>
         {children}
-        {debugOverlay}
+        {/* {debugOverlay} */}
       </>
     </ThemeProvider>
   );
