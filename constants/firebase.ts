@@ -1,10 +1,9 @@
 // Import the functions you need from the SDKs you need
+import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// TODO: Add SDKs for Firebase products that you want to use
 // https://firebase.google.com/docs/web/setup#available-libraries
 
 // Your web app's Firebase configuration
@@ -22,6 +21,27 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const auth = getAuth(app);
+
+// Initialize Auth with React Native AsyncStorage persistence when possible.
+// This code attempts to use `firebase/auth/react-native`. If it's not
+// available (types or module resolution), we fall back to `getAuth`.
+import type { Auth } from 'firebase/auth';
+
+let auth: Auth;
+try {
+  // Dynamic require to avoid static import/type resolution issues in web builds
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const rnAuth = require('firebase/auth/react-native');
+  auth = rnAuth.initializeAuth(app, {
+    persistence: rnAuth.getReactNativePersistence(ReactNativeAsyncStorage),
+  });
+} catch (e) {
+  // Fallback: use getAuth for environments where react-native persistence isn't available
+  // (e.g., web or missing types). getAuth will provide browser/node persistence.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getAuth: _getAuth } = require('firebase/auth');
+  auth = _getAuth(app);
+}
+
 export { auth, db };
 

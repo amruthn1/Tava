@@ -4,8 +4,74 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Mapbox from "@rnmapbox/maps";
 import { collection, deleteDoc, doc, onSnapshot, query } from "firebase/firestore";
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+
+// Reusable Pin component: uses react-native-svg when available, falls back to a styled View
+type PinProps = {
+  size?: number;
+  color?: string;
+  outline?: string;
+};
+
+const Pin = ({ size = 36, color = '#FF3B30', outline = '#fff' }: PinProps) => {
+  // Render a single Image with an inline SVG data URI so PointAnnotation
+  // receives only one native subview (react-native-mapbox limitation).
+  const svg = `<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
+    <path d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z' fill='${color}'/>
+    <path d='M12 11.5A2.5 2.5 0 1112 6a2.5 2.5 0 010 5.5z' fill='${outline}'/>
+  </svg>`;
+
+  // Use a single container View so PointAnnotation has only one direct subview.
+  const pinSize = size;
+  const circleSize = Math.round(pinSize * 0.5);
+  const triangleHeight = Math.round(pinSize * 0.44);
+
+  return (
+    <View
+      style={{
+        width: pinSize,
+        height: pinSize,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        backgroundColor: 'transparent',
+        // move the marker up so the tip points to the exact coordinate
+        transform: [{ translateY: -Math.round(pinSize * 0.4) }],
+      }}
+    >
+      <View
+        style={{
+          width: circleSize,
+          height: circleSize,
+          borderRadius: circleSize / 2,
+          backgroundColor: color,
+          borderWidth: 2,
+          borderColor: outline,
+          marginTop: 0,
+          // subtle shadow for visibility on map
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.25,
+          shadowRadius: 2,
+          elevation: 3,
+        }}
+      />
+      <View
+        style={{
+          width: 0,
+          height: 0,
+          borderLeftWidth: Math.round(circleSize * 0.45),
+          borderRightWidth: Math.round(circleSize * 0.45),
+          borderBottomWidth: triangleHeight,
+          borderLeftColor: 'transparent',
+          borderRightColor: 'transparent',
+          borderBottomColor: color,
+          marginTop: -6,
+        }}
+      />
+    </View>
+  );
+};
 
 const { width, height } = Dimensions.get('window');
 
@@ -139,6 +205,9 @@ export default function HomeScreen() {
     }
   };
 
+  // Recenter icon size (used by Ionicons)
+  const recenterIconSize = Math.max(width * 0.06, 20);
+
   return (
     <View style={styles.page}>
       <Mapbox.MapView
@@ -158,7 +227,10 @@ export default function HomeScreen() {
             key={event.id}
             id={event.id}
             coordinate={[event.location.longitude, event.location.latitude]}
+            anchor={{ x: 0.5, y: 1 }}
           >
+            {/* Marker content: use the Pin component */}
+            <Pin size={40} color="#FF3B30" outline="#ffffff" />
             <Mapbox.Callout title={event.eventType}>
               <View style={styles.calloutView}>
                 <Text style={styles.calloutText}>{event.eventType}</Text>
@@ -180,8 +252,8 @@ export default function HomeScreen() {
         <Ionicons name="chatbubble-ellipses" size={Math.max(width * 0.06, 20)} color="#fff" />
       </TouchableOpacity>
       {/* Recenter Button */}
-      <TouchableOpacity style={styles.recenterButton} onPress={handleRecenter}>
-        <Text style={styles.recenterIcon}>📍</Text>
+      <TouchableOpacity style={styles.recenterButton} onPress={handleRecenter} accessibilityLabel="Recenter map">
+        <Ionicons name="locate" size={recenterIconSize} color="#fff" />
       </TouchableOpacity>
       {/* Chat Modal - transparent overlay, closes on outside press */}
       {chatOpen && (

@@ -1,4 +1,5 @@
 import { auth } from '@/constants/firebase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import React, { useState } from 'react';
@@ -10,7 +11,13 @@ export default function SignInScreen() {
 
   const handleSignIn = async () => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      // cache uid so layout can avoid transient redirect
+      try {
+        await AsyncStorage.setItem('cachedUid', cred.user.uid);
+      } catch (e) {
+        console.warn('Failed to cache uid after sign-in', e);
+      }
       router.replace('/(tabs)'); // Navigate to main app
     } catch (error: any) {
       Alert.alert('Login failed', error.message);
