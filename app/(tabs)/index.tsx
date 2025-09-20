@@ -6,7 +6,8 @@ import Mapbox from "@rnmapbox/maps";
 import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc } from "firebase/firestore";
 import { auth } from "@/constants/firebase";
 import { useEffect, useRef, useState } from "react";
-import { Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View, Keyboard, StatusBar } from "react-native";
+import CreateEventPopup from '@/components/CreateEventPopup';
 
 // Reusable Pin component: uses react-native-svg when available, falls back to a styled View
 type PinProps = {
@@ -100,7 +101,8 @@ interface Event {
 const CHAT_MESSAGES_KEY = 'chatMessages_v1';
 
 export default function HomeScreen() {
-  const [chatOpen, setChatOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isCreateEventVisible, setIsCreateEventVisible] = useState(false);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [lastLocation, setLastLocation] = useState<{
     latitude: number;
@@ -257,94 +259,108 @@ export default function HomeScreen() {
   const recenterIconSize = Math.max(width * 0.06, 20);
 
   return (
-    <View style={styles.page}>
-      <Mapbox.MapView
-        ref={mapRef}
-        style={styles.map}
-        styleURL="mapbox://styles/rohithn1/cmfrlmj1x00g101ry1y3b63h3"
-        scaleBarEnabled={false}
-      >
-        <Mapbox.Camera
-          ref={cameraRef}
-          pitch={0}
-        />
-        <Mapbox.UserLocation visible onUpdate={onUserLocationUpdate} />
-        <Mapbox.LocationPuck visible/>
-        {events.map((event) => (
-          <Mapbox.PointAnnotation
-            key={event.id}
-            id={event.id}
-            coordinate={[event.location.longitude, event.location.latitude]}
-            anchor={{ x: 0.5, y: 1 }}
-          >
-            {/* Marker content: use the Pin component */}
-            <Pin size={40} color="#FF3B30" outline="#ffffff" />
-            <Mapbox.Callout title={event.eventType}>
-              <View style={styles.calloutView}>
-                <Text style={styles.calloutText}>{event.eventType}</Text>
-                {event.locationName && (
-                  <Text style={styles.calloutText}>📍 {event.locationName}</Text>
-                )}
-                <Text style={styles.calloutText}>People: {event.numPeople}</Text>
-                {event.description && (
-                  <Text style={styles.calloutText}>{event.description}</Text>
-                )}
-                <Text style={styles.calloutText}>
-                  RSVPs: {event.rsvps?.length || 0}
-                  {event.maxAttendees ? `/${event.maxAttendees}` : ''}
-                </Text>
-                <View style={styles.buttonContainer}>
-                  <TouchableOpacity 
-                    onPress={() => handleRSVP(event.id)} 
-                    style={[
-                      styles.rsvpButton,
-                      event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonActive
-                    ]}
-                  >
-                    <Text style={[
-                      styles.rsvpButtonText,
-                      event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive
-                    ]}>
-                      {event.rsvps?.includes(auth.currentUser?.uid || '') ? '✓ RSVP\'d' : 'RSVP'}
-                    </Text>
-                  </TouchableOpacity>
-                  {auth.currentUser?.uid === event.creatorId && (
-                    <TouchableOpacity onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
-                      <Text style={styles.deleteButtonText}>Delete</Text>
-                    </TouchableOpacity>
+    <View style={styles.container}>
+      <StatusBar />
+      <CreateEventPopup 
+        visible={isCreateEventVisible} 
+        onClose={() => setIsCreateEventVisible(false)} 
+      />
+      <Pressable style={styles.container} onPress={() => Keyboard.dismiss()}>
+        <Mapbox.MapView
+          ref={mapRef}
+          style={styles.map}
+          styleURL="mapbox://styles/rohithn1/cmfrlmj1x00g101ry1y3b63h3"
+          scaleBarEnabled={false}
+        >
+          <Mapbox.Camera
+            ref={cameraRef}
+            pitch={0}
+          />
+          <Mapbox.UserLocation visible onUpdate={onUserLocationUpdate} />
+          <Mapbox.LocationPuck visible/>
+          {events.map((event) => (
+            <Mapbox.PointAnnotation
+              key={event.id}
+              id={event.id}
+              coordinate={[event.location.longitude, event.location.latitude]}
+              anchor={{ x: 0.5, y: 1 }}
+            >
+              {/* Marker content: use the Pin component */}
+              <Pin size={40} color="#FF3B30" outline="#ffffff" />
+              <Mapbox.Callout title={event.eventType}>
+                <View style={styles.calloutView}>
+                  <Text style={styles.calloutText}>{event.eventType}</Text>
+                  {event.locationName && (
+                    <Text style={styles.calloutText}> {event.locationName}</Text>
                   )}
+                  <Text style={styles.calloutText}>People: {event.numPeople}</Text>
+                  {event.description && (
+                    <Text style={styles.calloutText}>{event.description}</Text>
+                  )}
+                  <Text style={styles.calloutText}>
+                    RSVPs: {event.rsvps?.length || 0}
+                    {event.maxAttendees ? `/${event.maxAttendees}` : ''}
+                  </Text>
+                  <View style={styles.buttonContainer}>
+                    <TouchableOpacity 
+                      onPress={() => handleRSVP(event.id)} 
+                      style={[
+                        styles.rsvpButton,
+                        event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonActive
+                      ]}
+                    >
+                      <Text style={[
+                        styles.rsvpButtonText,
+                        event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive
+                      ]}>
+                        {event.rsvps?.includes(auth.currentUser?.uid || '') ? '✓ RSVP\'d' : 'RSVP'}
+                      </Text>
+                    </TouchableOpacity>
+                    {auth.currentUser?.uid === event.creatorId && (
+                      <TouchableOpacity onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
+                        <Text style={styles.deleteButtonText}>Delete</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-              </View>
-            </Mapbox.Callout>
-          </Mapbox.PointAnnotation>
-        ))}
-      </Mapbox.MapView>
-      {/* Floating Chat Button Above Recenter */}
-      <TouchableOpacity
+              </Mapbox.Callout>
+            </Mapbox.PointAnnotation>
+          ))}
+        </Mapbox.MapView>
+      </Pressable>
+      {/* Floating Chat Button */}
+      <TouchableOpacity 
         style={styles.chatButton}
-        onPress={() => setChatOpen(true)}
+        onPress={() => setIsChatOpen(true)}
         activeOpacity={0.8}
       >
-        <Ionicons name="chatbubble-ellipses" size={Math.max(width * 0.06, 20)} color="#fff" />
+        <Ionicons name="chatbubbles" size={24} color="white" />
+      </TouchableOpacity>
+      {/* Create Event FAB */}
+      <TouchableOpacity 
+        style={styles.createEventButton}
+        onPress={() => setIsCreateEventVisible(true)}
+      >
+        <Ionicons name="add" size={28} color="white" />
       </TouchableOpacity>
       {/* Recenter Button */}
       <TouchableOpacity style={styles.recenterButton} onPress={handleRecenter} accessibilityLabel="Recenter map">
         <Ionicons name="locate" size={recenterIconSize} color="#fff" />
       </TouchableOpacity>
       {/* Chat Modal - transparent overlay, closes on outside press */}
-      {chatOpen && (
+      {isChatOpen && (
         <View style={styles.chatModalOverlay}>
           {/* Backdrop: only this Pressable closes the modal when tapped */}
-          <Pressable style={styles.backdrop} onPress={() => setChatOpen(false)} />
+          <Pressable style={styles.backdrop} onPress={() => setIsChatOpen(false)} />
           {/* Modal content: regular View so ScrollView inside can handle touches/scrolls */}
           <View style={styles.chatModal}>
-              <View style={styles.chatModalInner}>
+            <View style={styles.chatModalInner}>
               <AIChatbot
                 style={styles.chatModalContent}
                 messages={chatMessages}
                 onMessagesChange={handleMessagesChange}
                 events={events}
-                onClose={() => setChatOpen(false)}
+                onClose={() => setIsChatOpen(false)}
               />
             </View>
           </View>
@@ -354,30 +370,46 @@ export default function HomeScreen() {
   );
 }
 
-
-
 const styles = StyleSheet.create({
-  chatButton: {
-    position: "absolute",
-    bottom: height * 0.05,
-    right: width * 0.05,
-    width: width * 0.13,
-    height: width * 0.13,
-    borderRadius: width * 0.065,
-    padding: width * 0.03,
-    backgroundColor: "#222",
-    justifyContent: "center",
-    alignItems: "center",
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-    zIndex: 10,
+  container: {
+    flex: 1,
   },
-  chatButtonIcon: {
-    fontSize: Math.max(width * 0.07, 20),
-    color: "#fff",
+  map: {
+    flex: 1,
+  },
+  createEventButton: {
+    position: 'absolute',
+    right: 20,
+    top: 60, // Position below status bar
+    backgroundColor: '#FF3B30',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    zIndex: 1000,
+  },
+  chatButton: {
+    position: 'absolute',
+    right: 20,
+    bottom: height * 0.05, // Match recenter button's bottom position
+    backgroundColor: '#007AFF',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    zIndex: 1000,
   },
   chatModalOverlay: {
     position: "absolute",
@@ -421,9 +453,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   page: {
-    flex: 1,
-  },
-  map: {
     flex: 1,
   },
   recenterButton: {
