@@ -3,7 +3,8 @@ import { db } from "@/constants/firebase";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Mapbox from "@rnmapbox/maps";
-import { collection, deleteDoc, doc, onSnapshot, query } from "firebase/firestore";
+import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc } from "firebase/firestore";
+import { auth } from "@/constants/firebase";
 import { useEffect, useRef, useState } from "react";
 import { Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
@@ -87,6 +88,12 @@ interface Event {
     latitude: number;
     longitude: number;
   };
+  locationName?: string;
+  description?: string;
+  createdAt: Date;
+  creatorId: string;
+  rsvps?: string[]; // Array of user IDs who have RSVP'd
+  maxAttendees?: number;
 }
 
 // Key for AsyncStorage (declare before component to avoid TDZ issues)
@@ -159,9 +166,50 @@ export default function HomeScreen() {
 
   const handleDelete = async (eventId: string) => {
     try {
-      await deleteDoc(doc(db, "events", eventId));
+      const user = auth.currentUser;
+      const event = events.find(e => e.id === eventId);
+      if (user && event && event.creatorId === user.uid) {
+        await deleteDoc(doc(db, "events", eventId));
+      } else {
+        console.warn("User not authorized to delete this event");
+      }
     } catch (error) {
       console.error("Error removing document: ", error);
+    }
+  };
+
+  const handleRSVP = async (eventId: string) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        console.warn("User must be logged in to RSVP");
+        return;
+      }
+
+      const event = events.find(e => e.id === eventId);
+      if (!event) return;
+
+      const userHasRSVPd = event.rsvps?.includes(user.uid) || false;
+      const eventRef = doc(db, "events", eventId);
+
+      if (userHasRSVPd) {
+        // Remove RSVP
+        await updateDoc(eventRef, {
+          rsvps: arrayRemove(user.uid)
+        });
+      } else {
+        // Add RSVP (check max attendees if set)
+        const currentRSVPs = event.rsvps?.length || 0;
+        if (event.maxAttendees && currentRSVPs >= event.maxAttendees) {
+          console.warn("Event is at maximum capacity");
+          return;
+        }
+        await updateDoc(eventRef, {
+          rsvps: arrayUnion(user.uid)
+        });
+      }
+    } catch (error) {
+      console.error("Error updating RSVP: ", error);
     }
   };
 
@@ -234,10 +282,38 @@ export default function HomeScreen() {
             <Mapbox.Callout title={event.eventType}>
               <View style={styles.calloutView}>
                 <Text style={styles.calloutText}>{event.eventType}</Text>
+                {event.locationName && (
+                  <Text style={styles.calloutText}>📍 {event.locationName}</Text>
+                )}
                 <Text style={styles.calloutText}>People: {event.numPeople}</Text>
-                <TouchableOpacity onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
-                  <Text style={styles.deleteButtonText}>Delete</Text>
-                </TouchableOpacity>
+                {event.description && (
+                  <Text style={styles.calloutText}>{event.description}</Text>
+                )}
+                <Text style={styles.calloutText}>
+                  RSVPs: {event.rsvps?.length || 0}
+                  {event.maxAttendees ? `/${event.maxAttendees}` : ''}
+                </Text>
+                <View style={styles.buttonContainer}>
+                  <TouchableOpacity 
+                    onPress={() => handleRSVP(event.id)} 
+                    style={[
+                      styles.rsvpButton,
+                      event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonActive
+                    ]}
+                  >
+                    <Text style={[
+                      styles.rsvpButtonText,
+                      event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive
+                    ]}>
+                      {event.rsvps?.includes(auth.currentUser?.uid || '') ? '✓ RSVP\'d' : 'RSVP'}
+                    </Text>
+                  </TouchableOpacity>
+                  {auth.currentUser?.uid === event.creatorId && (
+                    <TouchableOpacity onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
+                      <Text style={styles.deleteButtonText}>Delete</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             </Mapbox.Callout>
           </Mapbox.PointAnnotation>
@@ -401,5 +477,29 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: 'white',
     fontWeight: 'bold',
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: Math.max(width * 0.02, 6),
+    gap: Math.max(width * 0.02, 6),
+  },
+  rsvpButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: Math.max(height * 0.008, 6),
+    paddingHorizontal: Math.max(width * 0.03, 8),
+    borderRadius: Math.max(width * 0.02, 6),
+    flex: 1,
+  },
+  rsvpButtonActive: {
+    backgroundColor: '#34C759',
+  },
+  rsvpButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  rsvpButtonTextActive: {
+    color: 'white',
   },
 });
