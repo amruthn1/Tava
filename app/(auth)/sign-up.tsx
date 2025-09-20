@@ -2,14 +2,18 @@ import { auth } from '@/constants/firebase';
 import { router } from 'expo-router';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import React, { useState } from 'react';
-import { Alert, Button, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View, Keyboard } from 'react-native';
+import { Alert, Image, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View, Keyboard, useColorScheme } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Colors } from '@/constants/theme';
 
 function isPurdueEmail(email: string) {
   return /@purdue\.edu$/i.test(email.trim());
 }
 
 export default function SignUpScreen() {
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
+  const isDark = colorScheme === 'dark';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -42,69 +46,103 @@ export default function SignUpScreen() {
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
         <KeyboardAvoidingView 
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.container}
+          style={[styles.container, { backgroundColor: colors.background }]}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
         >
-          <View style={styles.formContainer}>
-          <Text style={styles.title}>Create Account</Text>
+          <View style={[styles.formContainer, { backgroundColor: isDark ? colors.background : '#fff' }]}>
+            <Image 
+              source={require('@/assets/images/tava-logo.png')} 
+              style={styles.logo} 
+              resizeMode="contain"
+            />
+            <Text style={[styles.title, { color: colors.text }]}>Create Account</Text>
           
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Purdue Email</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Purdue Email</Text>
             <TextInput
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
               keyboardType="email-address"
               autoCorrect={false}
-              style={styles.input}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: isDark ? colors.inputBackground : '#fff',
+                  color: isDark ? colors.inputText : '#000',
+                  borderColor: isDark ? colors.inputBorder : '#ddd'
+                }
+              ]}
               placeholder="yourname@purdue.edu"
-              placeholderTextColor="#999"
+              placeholderTextColor={isDark ? colors.inputPlaceholder : '#999'}
             />
           </View>
           
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Password</Text>
             <TextInput
               value={password}
               onChangeText={setPassword}
               secureTextEntry
-              style={styles.input}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: isDark ? colors.inputBackground : '#fff',
+                  color: isDark ? colors.inputText : '#000',
+                  borderColor: isDark ? colors.inputBorder : '#ddd'
+                }
+              ]}
               placeholder="••••••••"
-              placeholderTextColor="#999"
+              placeholderTextColor={isDark ? colors.inputPlaceholder : '#999'}
             />
           </View>
           
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Confirm Password</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Confirm Password</Text>
             <TextInput
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               secureTextEntry
-              style={styles.input}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: isDark ? colors.inputBackground : '#fff',
+                  color: isDark ? colors.inputText : '#000',
+                  borderColor: isDark ? colors.inputBorder : '#ddd'
+                }
+              ]}
               placeholder="••••••••"
-              placeholderTextColor="#999"
+              placeholderTextColor={isDark ? colors.inputPlaceholder : '#999'}
             />
           </View>
           
           <TouchableOpacity 
-            style={[styles.button, isLoading && styles.buttonDisabled]}
+            style={[
+              styles.button, 
+              { 
+                backgroundColor: isDark ? colors.buttonPrimary : colors.tint,
+                opacity: isLoading ? 0.7 : 1
+              }
+            ]}
             onPress={handleSignUp}
             disabled={isLoading}
           >
-            <Text style={styles.buttonText}>
+            <Text style={[styles.buttonText, { color: isDark ? colors.buttonPrimaryText : '#fff' }]}>
               {isLoading ? 'Creating Account...' : 'Sign Up'}
             </Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
-            style={styles.secondaryButton}
+            style={[styles.secondaryButton, { borderColor: colors.tint }]}
             onPress={() => router.replace('/(auth)/sign-in')}
             disabled={isLoading}
           >
-            <Text style={styles.secondaryButtonText}>Already have an account? Sign In</Text>
+            <Text style={[styles.secondaryButtonText, { color: isDark ? colors.buttonSecondaryText : colors.tint }]}>
+              Already have an account? Sign In
+            </Text>
           </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -114,9 +152,14 @@ export default function SignUpScreen() {
 }
 
 const styles = StyleSheet.create({
+  logo: {
+    width: 200,    // Adjust width here (was 150)
+    height: 120,   // Adjust height here (was 100)
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
   safeArea: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   container: {
     flex: 1,
@@ -127,56 +170,52 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 400,
     alignSelf: 'center',
+    borderRadius: 16,
+    margin: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#333',
     marginBottom: 32,
     textAlign: 'center',
   },
   inputContainer: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   label: {
     fontSize: 14,
-    color: '#444',
     marginBottom: 8,
     fontWeight: '500',
   },
   input: {
     height: 50,
-    borderColor: '#ddd',
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 16,
-    backgroundColor: '#fff',
     fontSize: 16,
-    color: '#333',
   },
   button: {
-    backgroundColor: '#007AFF',
     height: 50,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 16,
   },
-  buttonDisabled: {
-    backgroundColor: '#84c1ff',
-  },
   buttonText: {
-    color: 'white',
     fontSize: 16,
     fontWeight: '600',
   },
   secondaryButton: {
-    marginTop: 16,
+    marginTop: 20,
     padding: 12,
     alignItems: 'center',
   },
   secondaryButtonText: {
-    color: '#007AFF',
     fontSize: 14,
     fontWeight: '500',
   },

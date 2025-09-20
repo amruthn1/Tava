@@ -5,8 +5,27 @@
 
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+const tintColorLight = '#4A90E2';
+const tintColorDark = '#64B5F6';
+
+interface ColorScheme {
+  text: string;
+  background: string;
+  tint: string;
+  icon: string;
+  tabIconDefault: string;
+  tabIconSelected: string;
+  // Dark mode specific
+  backgroundElevated?: string;
+  inputBackground?: string;
+  inputBorder?: string;
+  inputText?: string;
+  inputPlaceholder?: string;
+  buttonPrimary?: string;
+  buttonPrimaryText?: string;
+  buttonSecondary?: string;
+  buttonSecondaryText?: string;
+}
 
 export const Colors = {
   light: {
@@ -16,10 +35,19 @@ export const Colors = {
     icon: '#687076',
     tabIconDefault: '#687076',
     tabIconSelected: tintColorLight,
-  },
+  } as ColorScheme,
   dark: {
-    text: '#ECEDEE',
-    background: '#151718',
+    text: '#E0E0E0',
+    background: '#000000',
+    backgroundElevated: '#1E1E1E',
+    inputBackground: '#2D2D2D',
+    inputBorder: '#444',
+    inputText: '#F5F5F5',
+    inputPlaceholder: '#888',
+    buttonPrimary: tintColorDark,
+    buttonPrimaryText: '#121212',
+    buttonSecondary: 'transparent',
+    buttonSecondaryText: tintColorDark,
     tint: tintColorDark,
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
