@@ -3,7 +3,7 @@ import { db } from "@/constants/firebase";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Mapbox from "@rnmapbox/maps";
-import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc } from "firebase/firestore";
+import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc, Timestamp } from "firebase/firestore";
 import { auth } from "@/constants/firebase";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View, Keyboard, StatusBar } from "react-native";
@@ -98,6 +98,8 @@ interface Event {
   creatorId: string;
   rsvps?: string[]; // Array of user IDs who have RSVP'd
   maxAttendees?: number;
+  eventDate?: Date; // Date and time when the event will occur
+  isActive?: boolean; // Whether the event is currently active or scheduled for future
 }
 
 // Key for AsyncStorage (declare before component to avoid TDZ issues)
@@ -121,12 +123,45 @@ export default function HomeScreen() {
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [initialCameraSet, setInitialCameraSet] = useState(false);
 
+  // Helper function to determine if event is active or future
+  const isEventActive = (event: Event) => {
+    if (event.isActive === false) return false; // Explicitly scheduled for future
+    if (!event.eventDate) return true; // No date set, assume active
+    return new Date(event.eventDate) <= new Date(); // Past or current time = active
+  };
+
+  // Format date for display
+  const formatEventDate = (date: Date) => {
+    const now = new Date();
+    const eventDate = new Date(date);
+    const diffTime = eventDate.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) {
+      return `Today at ${eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else if (diffDays === 1) {
+      return `Tomorrow at ${eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else if (diffDays > 1 && diffDays <= 7) {
+      return `${eventDate.toLocaleDateString([], { weekday: 'long' })} at ${eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else {
+      return eventDate.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ` at ${eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+  };
+
   useEffect(() => {
     const q = query(collection(db, "events"));
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const eventsData: Event[] = [];
       querySnapshot.forEach((doc) => {
-        eventsData.push({ id: doc.id, ...doc.data() } as Event);
+        const data = doc.data();
+        // Convert Firestore Timestamps to JavaScript Dates
+        const event = {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : data.createdAt,
+          eventDate: data.eventDate instanceof Timestamp ? data.eventDate.toDate() : data.eventDate,
+        } as Event;
+        eventsData.push(event);
       });
       setEvents(eventsData);
     });
@@ -306,56 +341,77 @@ export default function HomeScreen() {
           />
           <Mapbox.UserLocation visible onUpdate={onUserLocationUpdate} />
           <Mapbox.LocationPuck visible/>
-          {events.map((event) => (
-            <Mapbox.PointAnnotation
-              key={event.id}
-              id={event.id}
-              coordinate={[event.location.longitude, event.location.latitude]}
-              anchor={{ x: 0.5, y: 1 }}
-            >
-              {/* Marker content: use the Pin component */}
-              <Pin size={40} color="#FF3B30" outline="#ffffff" />
-              <Mapbox.Callout title={event.eventType}>
-                <View style={styles.calloutView}>
-                  <Text style={styles.calloutText}>{event.eventType}</Text>
-                  {event.locationName && (
-                    <Text style={styles.calloutText}>📍 {event.locationName}</Text>
-                  )}
-                  <Text style={styles.calloutText}>People: {event.numPeople}</Text>
-                  {event.description && (
-                    <Text style={styles.calloutText}>{event.description}</Text>
-                  )}
-                  <Text style={styles.calloutText}>
-                    RSVPs: {event.rsvps?.length || 0}
-                    {event.maxAttendees ? `/${event.maxAttendees}` : ''}
-                  </Text>
-                  <View style={styles.buttonContainer}>
-                    <CalloutWrapper
-                      onPress={() => handleRSVP(event.id)}
-                      style={[
-                        styles.rsvpButton,
-                        event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonActive
-                      ]}
-                    >
-                      <Text
+          {events.map((event) => {
+            const eventIsActive = isEventActive(event);
+            const pinColor = eventIsActive ? '#FF3B30' : '#007AFF'; // Red for active, blue for future
+            
+            return (
+              <Mapbox.PointAnnotation
+                key={event.id}
+                id={event.id}
+                coordinate={[event.location.longitude, event.location.latitude]}
+                anchor={{ x: 0.5, y: 1 }}
+              >
+                {/* Marker content: use the Pin component with dynamic color */}
+                <Pin size={40} color={pinColor} outline="#ffffff" />
+                <Mapbox.Callout title={event.eventType}>
+                  <View style={styles.calloutView}>
+                    {/* Event title with status badge */}
+                    <View style={styles.calloutHeader}>
+                      <Text style={styles.calloutTitle}>{event.eventType}</Text>
+                      <View style={[styles.calloutBadge, eventIsActive ? styles.calloutActiveBadge : styles.calloutFutureBadge]}>
+                        <Text style={styles.calloutBadgeText}>
+                          {eventIsActive ? 'ACTIVE' : 'FUTURE'}
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    {/* Event timing for future events */}
+                    {!eventIsActive && event.eventDate && (
+                      <Text style={styles.calloutTiming}>
+                        🕒 {formatEventDate(event.eventDate)}
+                      </Text>
+                    )}
+                    
+                    {event.locationName && (
+                      <Text style={styles.calloutText}>📍 {event.locationName}</Text>
+                    )}
+                    <Text style={styles.calloutText}>People: {event.numPeople}</Text>
+                    {event.description && (
+                      <Text style={styles.calloutText}>{event.description}</Text>
+                    )}
+                    <Text style={styles.calloutText}>
+                      RSVPs: {event.rsvps?.length || 0}
+                      {event.maxAttendees ? `/${event.maxAttendees}` : ''}
+                    </Text>
+                    <View style={styles.buttonContainer}>
+                      <CalloutWrapper
+                        onPress={() => handleRSVP(event.id)}
                         style={[
-                          styles.rsvpButtonText,
-                          event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive
+                          styles.rsvpButton,
+                          event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonActive
                         ]}
                       >
-                        {event.rsvps?.includes(auth.currentUser?.uid || '') ? '✓ RSVP\'d' : 'RSVP'}
-                      </Text>
-                    </CalloutWrapper>
-                    {auth.currentUser?.uid === event.creatorId && (
-                      <CalloutWrapper onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
-                        <Text style={styles.deleteButtonText}>Delete</Text>
+                        <Text
+                          style={[
+                            styles.rsvpButtonText,
+                            event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive
+                          ]}
+                        >
+                          {event.rsvps?.includes(auth.currentUser?.uid || '') ? '✓ RSVP\'d' : 'RSVP'}
+                        </Text>
                       </CalloutWrapper>
-                    )}
+                      {auth.currentUser?.uid === event.creatorId && (
+                        <CalloutWrapper onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
+                          <Text style={styles.deleteButtonText}>Delete</Text>
+                        </CalloutWrapper>
+                      )}
+                    </View>
                   </View>
-                </View>
-              </Mapbox.Callout>
-            </Mapbox.PointAnnotation>
-          ))}
+                </Mapbox.Callout>
+              </Mapbox.PointAnnotation>
+            );
+          })}
         </Mapbox.MapView>
       </Pressable>
       {/* Stacked Buttons Container */}
@@ -549,5 +605,41 @@ const styles = StyleSheet.create({
   },
   rsvpButtonTextActive: {
     color: 'white',
+  },
+  // New callout styles
+  calloutHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Math.max(width * 0.01, 4),
+  },
+  calloutTitle: {
+    color: 'black',
+    fontWeight: 'bold',
+    fontSize: 16,
+    flex: 1,
+  },
+  calloutBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  calloutActiveBadge: {
+    backgroundColor: '#34C759',
+  },
+  calloutFutureBadge: {
+    backgroundColor: '#007AFF',
+  },
+  calloutBadgeText: {
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  calloutTiming: {
+    color: '#007AFF',
+    fontSize: 12,
+    marginBottom: Math.max(width * 0.01, 4),
+    fontWeight: '600',
   },
 });
