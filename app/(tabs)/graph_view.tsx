@@ -727,9 +727,9 @@ export default function ExploreBuilders() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#0d0d0d' },
   splitLayoutContainer: { flex: 1 },
-  graphSection: { flex: 0.6, backgroundColor:'#121212', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#1f2937' },
+  graphSection: { flex: 0.7, backgroundColor:'#121212', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#1f2937' },
   detailsSection: { 
-    flex: 0.4, 
+    flex: 0.3, 
     backgroundColor: '#0d0d0d', 
     paddingHorizontal: 20, 
     paddingVertical: 16,
