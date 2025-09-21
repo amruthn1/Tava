@@ -29,11 +29,13 @@ interface AIChatbotProps {
   onMessagesChange?: (messages: Message[]) => void;
   events?: any[]; // optional list of current events (from Firestore)
   onClose?: () => void;
+  fullscreen?: boolean; // render as a full page instead of compact modal
+  keyboardOffset?: number; // keyboardVerticalOffset for KAV when fullscreen
 }
 
 const systemPrompt = `You are a helpful AI assistant named TavaBot for a mobile app that manages events and activities.`;
 
-export default function AIChatbot({ style, messages: externalMessages, onMessagesChange, events, onClose }: AIChatbotProps) {
+export default function AIChatbot({ style, messages: externalMessages, onMessagesChange, events, onClose, fullscreen = false, keyboardOffset }: AIChatbotProps) {
   const [internalMessages, setInternalMessages] = useState<Message[]>([]);
   const messages = externalMessages ?? internalMessages;
 
@@ -170,10 +172,13 @@ export default function AIChatbot({ style, messages: externalMessages, onMessage
     return () => clearTimeout(t);
   }, [messages]);
 
+  const containerStyle = fullscreen ? styles.pageContainer : styles.compactModalContainer;
+
   return (
     <KeyboardAvoidingView
-      style={[styles.compactModalContainer, style]}
+      style={[containerStyle, style]}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={fullscreen ? (keyboardOffset ?? (Platform.OS === 'ios' ? 80 : 0)) : undefined}
     >
       {/* Header */}
       <View style={styles.darkHeader}>
@@ -230,6 +235,7 @@ export default function AIChatbot({ style, messages: externalMessages, onMessage
           </View>
         )}
       </ScrollView>
+
       {/* Input */}
       <View style={styles.darkInputContainer}>
         <TextInput
@@ -260,6 +266,10 @@ export default function AIChatbot({ style, messages: externalMessages, onMessage
 }
 
 const styles = StyleSheet.create({
+  pageContainer: {
+    flex: 1,
+    backgroundColor: '#0d0d0d',
+  },
   compactModalContainer: {
     flex: 1,
     minHeight: height * 0.35,
