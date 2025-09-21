@@ -1,15 +1,15 @@
 import { clearCredentials } from '@/constants/credentialStore';
 import { auth, db } from '@/constants/firebase';
 import { POSTS_COLLECTION } from '@/types/post';
+import { router } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, onSnapshot, /* orderBy */ query, serverTimestamp, where, documentId } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, documentId, onSnapshot, /* orderBy */ query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
-import { Collapsible } from '@/components/ui/collapsible';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface PostItem { id: string; title: string; description?: string | null; createdAt?: number; }
-interface UserProfile { id: string; displayName?: string; ideaTitle?: string; ideaDescription?: string; bio?: string; email?: string | null; liked?: string[]; likedPosts?: string[]; }
+interface UserProfile { id: string; displayName?: string; ideaTitle?: string; ideaDescription?: string; bio?: string; email?: string | null; liked?: string[]; likedPosts?: string[]; university?: string | null; interests?: string[]; linkedinUrl?: string | null; websiteUrl?: string | null; onboardingComplete?: boolean; }
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -25,6 +25,14 @@ export default function ProfileScreen() {
   const [myLikedProfiles, setMyLikedProfiles] = useState<UserProfile[]>([]);
   const [postAuthorProfiles, setPostAuthorProfiles] = useState<UserProfile[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  // Edit profile form state
+  const [university, setUniversity] = useState('');
+  const [interests, setInterests] = useState('');
+  const [linkedinUrl, setLinkedinUrl] = useState('');
+  const [websiteUrl, setWebsiteUrl] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [showConnectionsModal, setShowConnectionsModal] = useState(false);
 
   // Subscribe to this user's posts
   useEffect(() => {
@@ -44,7 +52,7 @@ export default function ProfileScreen() {
     return () => unsub();
   }, [userId]);
 
-  // Subscribe to user profile document (if exists)
+  // Subscribe to user profile document (if exists) & guard onboarding
   useEffect(() => {
     if (!userId) return;
     const ref = doc(db, 'users', userId);
@@ -54,7 +62,21 @@ export default function ProfileScreen() {
         const likedArr = Array.isArray(data.liked) ? data.liked : [];
         const likedPostsArr = Array.isArray(data.likedPosts) ? data.likedPosts : [];
         console.log('[Profile] User doc loaded: liked=', likedArr.length, 'likedPosts=', likedPostsArr.length);
-        setProfile({ id: snap.id, displayName: data.displayName, ideaTitle: data.ideaTitle, ideaDescription: data.ideaDescription, bio: data.bio, email: data.email ?? null, liked: likedArr, likedPosts: likedPostsArr });
+        const prof: UserProfile = { id: snap.id, displayName: data.displayName, ideaTitle: data.ideaTitle, ideaDescription: data.ideaDescription, bio: data.bio, email: data.email ?? null, liked: likedArr, likedPosts: likedPostsArr, university: data.university ?? null, interests: Array.isArray(data.interests) ? data.interests : [], linkedinUrl: data.linkedinUrl ?? null, websiteUrl: data.websiteUrl ?? null, onboardingComplete: !!data.onboardingComplete };
+        setProfile(prof);
+        setUniversity(prof.university || '');
+        setInterests((prof.interests || []).join(', '));
+        setLinkedinUrl(prof.linkedinUrl || '');
+        setWebsiteUrl(prof.websiteUrl || '');
+        if (!prof.onboardingComplete) {
+          router.replace('/onboarding');
+        }
+      } else {
+        // Auto-create a minimal user document if missing to avoid update/set races elsewhere
+        console.log('[Profile] User doc missing; auto-creating base document');
+        setDoc(ref, { email: auth.currentUser?.email || null, onboardingComplete: false, createdAt: serverTimestamp() }, { merge: true }).catch(e => {
+          console.warn('[Profile] Failed to auto-create user doc', e);
+        });
       }
     });
     return () => unsub();
@@ -177,14 +199,37 @@ export default function ProfileScreen() {
   }, [title, description, userId]);
 
   const handleSignOut = useCallback(async () => {
-    try {
-      await signOut(auth);
-      await clearCredentials();
-      Alert.alert('Signed Out', 'You have been signed out.');
-    } catch (e: any) {
-      Alert.alert('Sign out failed', e.message || String(e));
-    }
+    Alert.alert('Sign Out','Are you sure you want to sign out?',[
+      { text:'Cancel', style:'cancel' },
+      { text:'Sign Out', style:'destructive', onPress: async () => {
+          try {
+            await signOut(auth);
+            await clearCredentials();
+          } catch (e:any) {
+            Alert.alert('Sign out failed', e.message || String(e));
+          }
+      }}
+    ]);
   }, []);
+
+  const handleSaveProfile = useCallback(async () => {
+    if (!userId) return;
+    try {
+      setSavingProfile(true);
+      const interestsArr = interests.split(',').map(s => s.trim()).filter(Boolean);
+      await setDoc(doc(db,'users',userId), {
+        university: university.trim() || null,
+        interests: interestsArr,
+        linkedinUrl: linkedinUrl.trim() || null,
+        websiteUrl: websiteUrl.trim() || null
+      }, { merge: true });
+      setShowEditProfile(false);
+    } catch(e:any) {
+      Alert.alert('Error', e.message || 'Failed to save profile');
+    } finally {
+      setSavingProfile(false);
+    }
+  }, [userId, university, interests, linkedinUrl, websiteUrl]);
 
   const handleDeletePost = useCallback((postId: string) => {
     if (!userId) return;
@@ -217,58 +262,58 @@ export default function ProfileScreen() {
   );
 
   const headerContent = useMemo(() => {
+    const initials = (profile?.displayName || user?.email || 'U').split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase();
     return (
       <View style={styles.headerWrapper}>
-        <Text style={styles.screenTitle}>Your Profile</Text>
-        {user ? (
-          <Text style={styles.userMeta}>{profile?.displayName || user.email}</Text>
-        ) : (
-          <Text style={styles.authHint}>Sign in to create and view your posts.</Text>
-        )}
-        {profile?.bio && (
-          <View style={styles.bioBox}>
-            <Text style={styles.bioText}>{profile.bio}</Text>
+        <View style={styles.topRow}>
+          <View style={styles.avatarCircle}><Text style={styles.avatarText}>{initials}</Text></View>
+          <View style={{ flex:1, marginLeft:14 }}>
+            <Text style={styles.screenTitle}>{profile?.displayName || user?.email || 'Your Profile'}</Text>
+            {(profile?.email || user?.email) && (
+              <Text style={styles.userMetaLine}>{profile?.email || user?.email}</Text>
+            )}
           </View>
+        </View>
+        {user && (
+          <View style={styles.actionsRow}>              
+            <TouchableOpacity style={styles.smallAction} onPress={() => setShowCreateModal(true)}>
+              <Text style={styles.smallActionText}>Post</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.smallAction,{ backgroundColor:'#1e293b', borderColor:'#334155' }]} onPress={() => setShowEditProfile(true)}>
+              <Text style={styles.smallActionText}>Edit</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {(profile?.interests?.length || profile?.linkedinUrl || profile?.websiteUrl) ? (
+          <View style={styles.chipsRow}>
+            {!!profile?.interests?.length && (
+              <View style={styles.chip}><Text style={styles.chipText}>{profile.interests.slice(0,4).join(' · ')}{profile.interests.length>4?'…':''}</Text></View>
+            )}
+            {!!profile?.linkedinUrl && (
+              <Pressable onPress={() => { try { Linking.openURL(profile.linkedinUrl!); } catch {} }} style={styles.chip}><Text style={styles.chipText}>LinkedIn</Text></Pressable>
+            )}
+            {!!profile?.websiteUrl && (
+              <Pressable onPress={() => { try { Linking.openURL(profile.websiteUrl!); } catch {} }} style={styles.chip}><Text style={styles.chipText}>Website</Text></Pressable>
+            )}
+          </View>
+        ) : null}
+        {profile?.bio && (
+          <View style={styles.sectionCard}><Text style={styles.sectionBody}>{profile.bio}</Text></View>
         )}
         {!profile?.bio && profile?.ideaDescription && (
-          <View style={styles.bioBox}>
-            <Text style={styles.bioText}>{profile.ideaDescription}</Text>
-          </View>
+          <View style={styles.sectionCard}><Text style={styles.sectionBody}>{profile.ideaDescription}</Text></View>
         )}
         {profile?.ideaTitle && (
-          <View style={styles.ideaBox}>
+          <View style={styles.sectionCard}> 
             <Text style={styles.ideaTitle}>{profile.ideaTitle}</Text>
             {profile.ideaDescription && <Text style={styles.ideaDesc}>{profile.ideaDescription}</Text>}
           </View>
         )}
-        {/* Direct Connections above Posts */}
-        <Collapsible title={`Direct Connections (${directConnections.length})`}>
-          <View style={styles.connectionsSection}>
-            {directConnections.length === 0 ? (
-              <Text style={styles.emptyText}>No direct connections yet.</Text>
-            ) : (
-              <View>
-                {directConnections.map(conn => (
-                  <View key={conn.id} style={styles.connCard}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.connName}>{conn.displayName || 'Unnamed'}</Text>
-                      {!!conn.email && mutualIdSet.has(conn.id) && <Text style={styles.connSub}>{conn.email}</Text>}
-                      {!mutualIdSet.has(conn.id) && <Text style={[styles.connSub,{ color:'#9ca3af' }]}>Waiting for mutual connect</Text>}
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.connActionBtn, (!conn.email || !mutualIdSet.has(conn.id)) && { opacity: 0.5 }]}
-                      disabled={!conn.email || !mutualIdSet.has(conn.id)}
-                      onPress={() => { try { if (conn.email) Linking.openURL(`mailto:${encodeURIComponent(conn.email)}`); } catch {} }}
-                      accessibilityLabel={`Email ${conn.displayName || 'connection'}`}
-                    >
-                      <Text style={styles.connActionText}>Email</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
-          </View>
-        </Collapsible>
+        <View style={styles.divider} />
+        <TouchableOpacity style={styles.connectionsTrigger} onPress={() => setShowConnectionsModal(true)}>
+          <Text style={styles.connectionsTriggerText}>Direct Connections ({directConnections.length})</Text>
+        </TouchableOpacity>
+        <View style={styles.divider} />
         <Text style={styles.sectionLabel}>Posts</Text>
       </View>
     );
@@ -278,36 +323,28 @@ export default function ProfileScreen() {
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <View style={[styles.container,{ paddingTop: insets.top + 4 }]}>        
         {userId ? (
-          <View style={{ flex:1 }}>
-            <View style={{ flexShrink:0 }}>
-              {headerContent}
-            </View>
-            <View style={styles.postsWindow}> 
-              <FlatList
-                data={posts}
-                keyExtractor={item => item.id}
-                renderItem={renderItem}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={true}
-                ListEmptyComponent={<Text style={styles.emptyText}>No posts yet. Create your first one.</Text>}
-              />
-            </View>
-          </View>
+          <FlatList
+            data={posts}
+            keyExtractor={item => item.id}
+            renderItem={renderItem}
+            ListHeaderComponent={headerContent}
+            contentContainerStyle={{ paddingBottom:120 }}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={<Text style={styles.emptyText}>No posts yet. Create your first one.</Text>}
+          />
         ) : (
           <View style={{ flex:1, justifyContent:'center', alignItems:'center' }}>
             <Text style={styles.authHint}>Sign in to view profile.</Text>
           </View>
         )}
         {userId && (
-          <View style={styles.bottomBar}>
-            <TouchableOpacity style={[styles.bottomBtn, styles.createBtn]} onPress={() => setShowCreateModal(true)}>
-              <Text style={styles.bottomBtnText}>Create Post</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.bottomBtn, styles.signOutBtn]} onPress={handleSignOut}>
-              <Text style={styles.bottomBtnText}>Sign Out</Text>
+          <View style={styles.floatingSignOutWrap}>
+            <TouchableOpacity style={styles.signOutFloatingBtn} onPress={handleSignOut}>
+              <Text style={styles.signOutFloatingText}>Sign Out</Text>
             </TouchableOpacity>
           </View>
         )}
+        {/* Create Post Modal */}
         <Modal visible={showCreateModal} animationType="slide" transparent onRequestClose={() => setShowCreateModal(false)}>
           <TouchableWithoutFeedback onPress={() => setShowCreateModal(false)}>
             <View style={styles.modalOverlay}>
@@ -339,6 +376,81 @@ export default function ProfileScreen() {
                       <Text style={styles.submitButtonText}>{submitting ? 'Publishing...' : 'Publish Post'}</Text>
                     </TouchableOpacity>
                   </View>
+                </KeyboardAvoidingView>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+        {/* Edit Profile Modal */}
+        <Modal visible={showEditProfile} animationType="fade" transparent onRequestClose={() => setShowEditProfile(false)}>
+          <TouchableWithoutFeedback onPress={() => setShowEditProfile(false)}>
+            <View style={styles.modalOverlay}>
+              <TouchableWithoutFeedback onPress={() => { /* swallow */ }}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalCardWrapper}>
+                  <View style={styles.editModalCard}>
+                    <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                      <View style={styles.modalHeaderRow}>
+                        <Text style={styles.modalTitle}>Edit Profile</Text>
+                        <TouchableOpacity onPress={() => setShowEditProfile(false)} style={styles.closeBtn}><Text style={styles.closeBtnText}>✕</Text></TouchableOpacity>
+                      </View>
+                      <Text style={styles.smallLabel}>University</Text>
+                      <TextInput style={styles.input} value={university} onChangeText={setUniversity} placeholder="University" placeholderTextColor="#777" />
+                      <Text style={styles.smallLabel}>Interests (comma separated)</Text>
+                      <TextInput style={styles.input} value={interests} onChangeText={setInterests} placeholder="AI, BioTech" placeholderTextColor="#777" />
+                      <Text style={styles.smallLabel}>LinkedIn URL</Text>
+                      <TextInput style={styles.input} value={linkedinUrl} onChangeText={setLinkedinUrl} placeholder="https://linkedin.com/in/username" placeholderTextColor="#777" autoCapitalize='none' />
+                      <Text style={styles.smallLabel}>Website URL</Text>
+                      <TextInput style={styles.input} value={websiteUrl} onChangeText={setWebsiteUrl} placeholder="https://yoursite.com" placeholderTextColor="#777" autoCapitalize='none' />
+                      <TouchableOpacity disabled={savingProfile} style={[styles.saveProfileBtn, savingProfile && { opacity:0.6 }]} onPress={handleSaveProfile}>
+                        <Text style={styles.saveProfileText}>{savingProfile ? 'Saving...' : 'Save Changes'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.cancelProfileBtn} onPress={() => setShowEditProfile(false)}>
+                        <Text style={styles.cancelProfileText}>Cancel</Text>
+                      </TouchableOpacity>
+                    </ScrollView>
+                  </View>
+                </KeyboardAvoidingView>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+        {/* Connections Modal */}
+        <Modal visible={showConnectionsModal} animationType="slide" transparent onRequestClose={() => setShowConnectionsModal(false)}>
+          <TouchableWithoutFeedback onPress={() => setShowConnectionsModal(false)}>
+            <View style={styles.modalOverlay}>
+              <TouchableWithoutFeedback onPress={() => { /* swallow */ }}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalCardWrapper}>
+                  <ScrollView
+                    style={styles.connectionsModalCard}
+                    contentContainerStyle={{ paddingBottom:12 }}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <View style={styles.modalHeaderRow}>
+                      <Text style={styles.modalTitle}>Direct Connections</Text>
+                      <TouchableOpacity onPress={() => setShowConnectionsModal(false)} style={styles.closeBtn}><Text style={styles.closeBtnText}>✕</Text></TouchableOpacity>
+                    </View>
+                    {directConnections.length === 0 ? (
+                      <Text style={styles.emptyText}>No direct connections yet.</Text>
+                    ) : directConnections.map(conn => {
+                      const mutual = mutualIdSet.has(conn.id);
+                      return (
+                        <View key={conn.id} style={styles.connCard}>
+                          <View style={{ flex:1 }}>
+                            <Text style={styles.connName}>{conn.displayName || 'Unnamed'}</Text>
+                            {mutual && !!conn.email && <Text style={styles.connSub}>{conn.email}</Text>}
+                            {!mutual && <Text style={[styles.connSub,{ color:'#9ca3af' }]}>Waiting for mutual connect</Text>}
+                          </View>
+                          <TouchableOpacity
+                            style={[styles.connActionBtn, (!conn.email || !mutual) && { opacity:0.35 }]}
+                            disabled={!conn.email || !mutual}
+                            onPress={() => { try { if (conn.email) Linking.openURL(`mailto:${encodeURIComponent(conn.email)}`); } catch {} }}>
+                            <Text style={styles.connActionText}>Email</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
                 </KeyboardAvoidingView>
               </TouchableWithoutFeedback>
             </View>
@@ -392,11 +504,47 @@ const styles = StyleSheet.create({
   bioBox: { backgroundColor:'#141414', padding:12, borderRadius:12, borderWidth:1, borderColor:'#222', marginBottom:14 },
   bioText: { color:'#ddd', fontSize:13, lineHeight:18 },
   sectionLabel: { color:'#aaa', fontSize:12, fontWeight:'600', letterSpacing:0.5, marginBottom:8, textTransform:'uppercase' },
-  postsWindow: { flex:1, maxHeight:320, marginBottom:8 }
-  ,connectionsSection: { backgroundColor:'#141414', padding:12, borderRadius:12, borderWidth:1, borderColor:'#222', marginBottom:12 }
+  postsWindow: { flex:1 },
+  topRow: { flexDirection:'row', alignItems:'center', marginBottom:12 },
+  avatarCircle: { width:56, height:56, borderRadius:28, backgroundColor:'#1e293b', alignItems:'center', justifyContent:'center', borderWidth:1, borderColor:'#334155' },
+  avatarText: { color:'#93c5fd', fontSize:20, fontWeight:'700' },
+  // compactActions removed (replaced by actionsRow below)
+  actionsRow: { flexDirection:'row', gap:8, marginBottom:12 },
+  smallAction: { backgroundColor:'#2563eb', borderWidth:1, borderColor:'#1d4ed8', paddingHorizontal:14, paddingVertical:8, borderRadius:10 },
+  smallActionText: { color:'white', fontSize:12, fontWeight:'600' },
+  chipsRow: { flexDirection:'row', flexWrap:'wrap', gap:8, marginBottom:12 },
+  chip: { backgroundColor:'#1b1f24', paddingHorizontal:12, paddingVertical:6, borderRadius:16, borderWidth:1, borderColor:'#2a3139' },
+  chipText: { color:'#d1d5db', fontSize:11, fontWeight:'500', letterSpacing:0.3 },
+  sectionCard: { backgroundColor:'#141414', padding:14, borderRadius:14, borderWidth:1, borderColor:'#222', marginBottom:14 },
+  sectionBody: { color:'#ddd', fontSize:13, lineHeight:18 },
+  divider: { height:1, backgroundColor:'#1f2937', marginVertical:18, opacity:0.6 },
+  userMetaLine: { color:'#94a3b8', fontSize:12, marginTop:4 }
   ,connCard: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', paddingVertical:10, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#2a2a2a' }
   ,connName: { color:'white', fontSize:15, fontWeight:'600' }
   ,connSub: { color:'#888', fontSize:12, marginTop:2 }
   ,connActionBtn: { backgroundColor:'#2563eb', paddingHorizontal:12, paddingVertical:8, borderRadius:10 }
   ,connActionText: { color:'white', fontWeight:'600' }
+  ,headerRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:4 }
+  ,editProfileBtn: { paddingHorizontal:12, paddingVertical:6, backgroundColor:'#1e293b', borderRadius:8, borderWidth:1, borderColor:'#334155' }
+  ,editProfileText: { color:'#93c5fd', fontSize:12, fontWeight:'600' }
+  ,inlineCreateBtn: { alignSelf:'flex-start', backgroundColor:'#2563eb', paddingHorizontal:14, paddingVertical:8, borderRadius:18, marginTop:8, marginBottom:8 }
+  ,inlineCreateText: { color:'white', fontSize:13, fontWeight:'600' }
+  ,infoGrid: { flexDirection:'row', flexWrap:'wrap', gap:8, marginBottom:12 }
+  ,infoItem: { backgroundColor:'#1b1b1b', paddingHorizontal:10, paddingVertical:6, borderRadius:14, color:'#ddd', fontSize:11, borderWidth:1, borderColor:'#2a2a2a' }
+  ,floatingSignOutWrap: { position:'absolute', bottom:20, right:20 }
+  ,signOutFloatingBtn: { backgroundColor:'#b91c1c', paddingHorizontal:16, paddingVertical:10, borderRadius:26, borderWidth:1, borderColor:'#dc2626' }
+  ,signOutFloatingText: { color:'white', fontSize:13, fontWeight:'600' }
+  ,editModalCard: { backgroundColor:'#1e1e1e', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#333', maxHeight:'85%' }
+  ,smallLabel: { color:'#93c5fd', fontSize:11, fontWeight:'600', marginBottom:6 }
+  ,saveProfileBtn: { backgroundColor:'#2563eb', paddingVertical:12, borderRadius:10, alignItems:'center', marginTop:8 }
+  ,saveProfileText: { color:'white', fontWeight:'600', fontSize:15 }
+  ,cancelProfileBtn: { alignItems:'center', paddingVertical:10 }
+  ,cancelProfileText: { color:'#64748b', fontSize:13 }
+  ,connectionsTrigger: { backgroundColor:'#1b1f24', paddingHorizontal:14, paddingVertical:12, borderRadius:12, borderWidth:1, borderColor:'#2a3139' }
+  ,connectionsTriggerText: { color:'#d1d5db', fontSize:13, fontWeight:'600' }
+  ,connectionsModalCard: { backgroundColor:'#1e1e1e', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#333', maxHeight:'75%' }
 });
+
+// Edit Profile Modal (appended component)
+// NOTE: Appending directly below to keep single-file simplicity
+// (Could be factored out later.)

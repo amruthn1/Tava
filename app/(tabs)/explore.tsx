@@ -24,6 +24,7 @@ interface BuilderProfile {
   passedPosts?: string[]; // posts passed
   // Internal: when deck item represents a post, we store underlying author id here
   _authorId?: string;
+  email?: string | null;
 }
 
 // Post model (MVP)
@@ -230,11 +231,17 @@ export default function ExploreBuilders() {
         if (!snap.exists()) {
           await setDoc(ref, {
             displayName: firebaseUser.isAnonymous ? 'Anon' : (firebaseUser.email || 'User'),
+            email: firebaseUser.email || null,
             ideaTitle: null,
             ideaDescription: null,
             liked: [],
             likedPosts: [],
             passedPosts: [],
+            university: null,
+            interests: [],
+            linkedinUrl: null,
+            websiteUrl: null,
+            onboardingComplete: false,
             createdAt: Date.now()
           });
           console.log('[Explore] Created new user profile for', firebaseUser.uid);
@@ -248,7 +255,7 @@ export default function ExploreBuilders() {
   // Local initialize dummy data (runs once) – used only for demo mode; once authenticated we rely on remote docs
   useEffect(() => {
     if (initialized) return;
-    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
+    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', email: 'you@example.com', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
     setAllProfiles([localUser, ...INITIAL_PROFILES]);
     setInitialized(true);
   }, [initialized]);
@@ -266,6 +273,7 @@ export default function ExploreBuilders() {
           return {
             id: docSnap.id,
             displayName: data.displayName,
+            email: data.email ?? null,
             ideaTitle: data.ideaTitle,
             ideaDescription: data.ideaDescription,
             liked: Array.isArray(data.liked) ? data.liked : [],
@@ -438,7 +446,7 @@ export default function ExploreBuilders() {
 
   // Reset demo: restore original dummy profiles & posts and clear likes
   const resetDemo = useCallback(() => {
-    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
+    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', email: 'you@example.com', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
     setAllProfiles([localUser, ...INITIAL_PROFILES]);
     setDeck([]);
     setCurrentUserProfile(localUser);
@@ -519,6 +527,11 @@ export default function ExploreBuilders() {
       const children = second.filter(s => (n.likedPosts||[]).includes(s.id)).length;
       return 1 + children; // base weight 1 + child count
     });
+    // Deterministic pseudo-random based on node id (simple hash)
+    const hash01 = (id: string) => {
+      let h = 0; for (let i=0;i<id.length;i++) { h = (h*131 + id.charCodeAt(i)) >>> 0; }
+      return (h & 0xffffff) / 0xffffff; // 0..1
+    };
     const distribute = (nodes: BuilderProfile[], radius: number, phaseShift = 0) => {
       if (nodes.length === 0) return [] as {x:number;y:number}[];
       const weights = weightCounts(nodes);
@@ -526,9 +539,18 @@ export default function ExploreBuilders() {
       let angleCursor = -Math.PI/2 + phaseShift; // start top
       return nodes.map((n,i) => {
         const span = (2*Math.PI)*(weights[i]/total);
-        const angle = angleCursor + span/2; // center of span
+        // Base angle center of allocated span
+        let angle = angleCursor + span/2;
+        // Apply deterministic jitter: small angular offset and slight radial perturbation
+        const r1 = hash01(n.id + ':a');
+        const r2 = hash01(n.id + ':b');
+        const maxAngleJitter = Math.min(0.35, span * 0.45); // keep within local slot
+        const angleJitter = (r1 - 0.5) * 2 * maxAngleJitter; // symmetric about 0
+        const radialJitter = (r2 - 0.5) * radius * 0.08; // up to ±8% of radius
+        angle += angleJitter;
+        const effectiveRadius = radius + radialJitter;
         angleCursor += span;
-        return { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) };
+        return { x: center + effectiveRadius * Math.cos(angle), y: center + effectiveRadius * Math.sin(angle) };
       });
     };
   const firstPos = distribute(first, r1, 0);
@@ -544,11 +566,12 @@ export default function ExploreBuilders() {
     ) => {
       const dx = bx - ax; const dy = by - ay; const dist = Math.hypot(dx, dy); if (dist === 0) return;
       const angle = Math.atan2(dy, dx);
-      const baseOpacity = depth === 0 ? 0.55 : depth === 1 ? 0.38 : 0.22; // subtler baseline (GitHub network vibe)
-      const isHighlighted = !!selectedNode && (selectedNode === aId || selectedNode === bId);
-      const dimFactor = selectedNode ? (isHighlighted ? 1 : 0.12) : 1;
-      const opacity = baseOpacity * dimFactor + (isHighlighted ? 0.25 : 0); // bump highlighted edge visibility
-      const color = isHighlighted ? '#ffffff' : '#30363d';
+  const baseOpacity = depth === 0 ? 0.72 : depth === 1 ? 0.52 : 0.34; // brighter baseline
+  const isHighlighted = !!selectedNode && (selectedNode === aId || selectedNode === bId);
+  // When something is selected, keep non-involved edges visible (dim but not invisible)
+  const dimFactor = selectedNode ? (isHighlighted ? 1 : 0.28) : 1;
+  const opacity = baseOpacity * dimFactor + (isHighlighted ? 0.22 : 0); // highlighted edges still get a slight bump
+  const color = isHighlighted ? '#ffffff' : '#3a424a'; // lighten non-highlight color a bit
       acc.push(
         <View
           key={key}
@@ -573,38 +596,91 @@ export default function ExploreBuilders() {
 
     const renderEdges = () => {
       const edges: React.ReactElement[] = [];
-      // Center -> first (depth 0)
+      const used = new Set<string>(); // normalized pair keys idA|idB
+
+      const addEdge = (
+        aId: string, bId: string,
+        aCenter: {x:number;y:number}, bCenter: {x:number;y:number}, depth: number,
+        keyPrefix: string
+      ) => {
+        if (aId === bId) return;
+        const keyNorm = aId < bId ? aId + '|' + bId : bId + '|' + aId;
+        if (used.has(keyNorm)) return;
+        used.add(keyNorm);
+        pushEdge(edges, `${keyPrefix}-${aId}-${bId}`, aCenter.x, aCenter.y, bCenter.x, bCenter.y, depth, aId, bId);
+      };
+
+      // Center position (ME)
       const mePos = currentPosFor('ME', { x: center - 16, y: center - 16 });
       const meCenter = { x: mePos.x + 16, y: mePos.y + 16 };
-      first.forEach((p,i) => {
-        const fPos = currentPosFor(p.id, { x: firstPos[i].x - 13, y: firstPos[i].y - 13 });
-        const fCenter = { x: fPos.x + 13, y: fPos.y + 13 };
-        pushEdge(edges, 'edge-f-'+p.id, meCenter.x, meCenter.y, fCenter.x, fCenter.y, 0, 'ME', p.id);
+
+      // Helper to get center coordinate for node by ring
+      const nodeCenter = (id: string) => {
+        if (id === 'ME') return meCenter;
+        const inFirst = first.findIndex(p => p.id === id);
+        if (inFirst !== -1) {
+          const raw = currentPosFor(id, { x: firstPos[inFirst].x - 13, y: firstPos[inFirst].y - 13 });
+          return { x: raw.x + 13, y: raw.y + 13 };
+        }
+        const inSecond = secondRingNodes.findIndex(p => p.id === id);
+        if (inSecond !== -1) {
+          const raw = currentPosFor(id, { x: secondPos[inSecond].x - 11, y: secondPos[inSecond].y - 11 });
+          return { x: raw.x + 11, y: raw.y + 11 };
+        }
+        const inThird = thirdRingNodes.findIndex(p => p.id === id);
+        if (inThird !== -1) {
+          const raw = currentPosFor(id, { x: thirdPos[inThird].x - 11, y: thirdPos[inThird].y - 11 });
+          return { x: raw.x + 11, y: raw.y + 11 };
+        }
+        return meCenter; // fallback
+      };
+
+      // 1. Center -> first (depth 0)
+      first.forEach(p => {
+        addEdge('ME', p.id, meCenter, nodeCenter(p.id), 0, 'edge-f');
       });
-      // first -> second (depth 1)
-      secondRingNodes.forEach((p, si) => {
-        const parents = first.filter(f => (f.liked || []).includes(p.id));
-        parents.forEach(parent => {
-          const pi = first.indexOf(parent); if (pi === -1) return;
-          const aPos = currentPosFor(parent.id, { x: firstPos[pi].x - 13, y: firstPos[pi].y - 13 });
-          const bPos = currentPosFor(p.id, { x: secondPos[si].x - 11, y: secondPos[si].y - 11 });
-          pushEdge(edges, 'edge-s2-'+p.id+'-'+parent.id, aPos.x + 13, aPos.y + 13, bPos.x + 11, bPos.y + 11, 1, parent.id, p.id);
+
+      // 2. First ring internal connections (any like either direction) depth 0
+      for (let i = 0; i < first.length; i++) {
+        const a = first[i];
+        for (let j = i + 1; j < first.length; j++) {
+          const b = first[j];
+            if ((a.liked||[]).includes(b.id) || (b.liked||[]).includes(a.id)) {
+              addEdge(a.id, b.id, nodeCenter(a.id), nodeCenter(b.id), 0, 'edge-fc');
+            }
+        }
+      }
+
+      // 3. First -> second (depth 1) both directions (if either liked the other)
+      // Our graph construction logic earlier promotes authors (profiles) to second ring when
+      // they are authors of posts liked by first-ring authors (via their likedPosts).
+      // So we reconstruct that linkage: for each first ring profile f, look at its likedPosts,
+      // find those posts' authors that live in secondRingNodes, and create edges.
+      const postsById: Record<string, PostItem> = {};
+      posts.forEach(p => { postsById[p.id] = p; });
+      secondRingNodes.forEach(sec => {
+        first.forEach(f => {
+          const likedPostIds = f.likedPosts || [];
+          for (let lpId of likedPostIds) {
+            const post = postsById[lpId];
+            if (post && post.authorId === sec.id) {
+              addEdge(f.id, sec.id, nodeCenter(f.id), nodeCenter(sec.id), 1, 'edge-s2');
+              break; // one edge per pair is enough
+            }
+          }
         });
       });
-      // second/first -> third (depth 2)
-      thirdRingNodes.forEach((p, ti) => {
-        const parents = [...first, ...secondRingNodes].filter(f => (f.liked || []).includes(p.id));
-        parents.forEach(parent => {
-          const piFirst = first.indexOf(parent);
-          const sourcePos = piFirst !== -1 ? firstPos[piFirst] : secondPos[secondRingNodes.indexOf(parent)];
-          if (!sourcePos) return;
-          const aId = parent.id;
-          const aPos = currentPosFor(aId, piFirst !== -1 ? { x: sourcePos.x - 13, y: sourcePos.y - 13 } : { x: sourcePos.x - 11, y: sourcePos.y - 11 });
-          const bPos = currentPosFor(p.id, { x: thirdPos[ti].x - 11, y: thirdPos[ti].y - 11 });
-          const aRadiusOffset = piFirst !== -1 ? 13 : 11;
-          pushEdge(edges, 'edge-s3-'+p.id+'-'+parent.id, aPos.x + aRadiusOffset, aPos.y + aRadiusOffset, bPos.x + 11, bPos.y + 11, 2, parent.id, p.id);
+
+      // 4. Second/First -> third (depth 2) (existing outward logic, either direction)
+      thirdRingNodes.forEach(third => {
+        [...first, ...secondRingNodes].forEach(parent => {
+          if ((parent.liked||[]).includes(third.id) || (third.liked||[]).includes(parent.id)) {
+            const depth = first.some(f => f.id === parent.id) ? 2 : 2; // keep 2 for styling consistency
+            addEdge(parent.id, third.id, nodeCenter(parent.id), nodeCenter(third.id), depth, 'edge-s3');
+          }
         });
       });
+
       return edges;
     };
 
@@ -634,7 +710,7 @@ export default function ExploreBuilders() {
                 style={[styles.node, styles.nodeMe, isSel && styles.nodeSelected, { position:'absolute', left: pos.x, top: pos.y, width:32, height:32, borderRadius:16 }]}
               >
                 <TouchableOpacity activeOpacity={0.8} onPress={() => setSelectedNode(s => s === id ? null : id)}>
-                  <Text style={styles.nodeLabel}>{currentUserProfile.displayName?.[0] || 'U'}</Text>
+                  <Text style={styles.nodeLabel}>{(currentUserProfile.email || currentUserProfile.displayName || 'User').trim()[0]?.toUpperCase() || 'U'}</Text>
                 </TouchableOpacity>
               </Animated.View>
             );
@@ -649,7 +725,7 @@ export default function ExploreBuilders() {
             return (
               <Animated.View key={p.id} {...pan.panHandlers} style={[styles.node, styles.nodeFirst, isSel && styles.nodeSelected, { left: pos.x, top: pos.y, width:26, height:26, borderRadius:13 }]}> 
                 <TouchableOpacity activeOpacity={0.8} onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}>
-                  <Text style={[styles.nodeLabel,{fontSize:11}]}>{p.displayName?.[0] || '?'}</Text>
+                  <Text style={[styles.nodeLabel,{fontSize:11}]}>{(p.email || p.displayName || '?').trim()[0]?.toUpperCase() || '?'}</Text>
                 </TouchableOpacity>
               </Animated.View>
             );
@@ -664,7 +740,7 @@ export default function ExploreBuilders() {
             return (
               <Animated.View key={p.id} {...pan.panHandlers} style={[styles.node, styles.nodeSecond, isSel && styles.nodeSelected, { left: pos.x, top: pos.y, width:22, height:22, borderRadius:11 }]}> 
                 <TouchableOpacity activeOpacity={0.8} onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}>
-                  <Text style={[styles.nodeLabelSmall,{fontSize:10}]}>{p.displayName?.[0] || '?'}</Text>
+                  <Text style={[styles.nodeLabelSmall,{fontSize:10}]}>{(p.email || p.displayName || '?').trim()[0]?.toUpperCase() || '?'}</Text>
                 </TouchableOpacity>
               </Animated.View>
             );
@@ -679,7 +755,7 @@ export default function ExploreBuilders() {
             return (
               <Animated.View key={p.id} {...pan.panHandlers} style={[styles.node, styles.nodeSecond, isSel && styles.nodeSelected, { left: pos.x, top: pos.y, width:22, height:22, borderRadius:11, opacity:0.9 }]}> 
                 <TouchableOpacity activeOpacity={0.8} onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}>
-                  <Text style={[styles.nodeLabelSmall,{fontSize:10}]}>{p.displayName?.[0] || '?'}</Text>
+                  <Text style={[styles.nodeLabelSmall,{fontSize:9}]}>{(p.email || p.displayName || '?').trim()[0]?.toUpperCase() || '?'}</Text>
                 </TouchableOpacity>
               </Animated.View>
             );
@@ -700,87 +776,91 @@ export default function ExploreBuilders() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {renderGraph()}
-  <Pressable style={styles.flexDeckWrapper} onPress={resetAllNodes}>
-        <View style={styles.flexCardRegion}>
-          {currentUserProfile && !allProfiles.find(p => p.id === currentUserProfile.id && (p.likedPosts || p.liked || p.ideaTitle !== undefined)) && (
-            <View style={styles.onboardingBanner}>
-              <Text style={styles.onboardingTitle}>Welcome!</Text>
-              <Text style={styles.onboardingBody}>Create a post so others can discover your project. Your own profile doc was just initialized.</Text>
-            </View>
-          )}
-          {deck.length === 0 && (
-            <View style={styles.emptyDeck}>            
-              <Text style={styles.emptyDeckText}>No profiles available.</Text>
-              {demoMode && (
-                <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
-                  <Text style={styles.inlineResetText}>Reset Demo</Text>
-                </TouchableOpacity>
+      <View style={styles.splitContainer}>
+        <Pressable style={styles.graphSection} onPress={resetAllNodes}>
+          {renderGraph()}
+          {lastRemoteError && (
+            <View style={styles.remoteErrorBanner}>
+              <Text style={styles.remoteErrorText}>Remote error: {lastRemoteError}</Text>
+              {permissionDiagnosis && (
+                <Text style={styles.remoteDiagnosisText}>{permissionDiagnosis}</Text>
               )}
               {remoteDisabled && (
-                <View style={{ marginTop: 12 }}>
-                  <Text style={{ color: '#f87171', fontSize: 12, textAlign: 'center' }}>Remote data disabled (permissions).</Text>
-                  <TouchableOpacity
-                    style={[styles.inlineReset,{marginTop:8}]}
-                    accessibilityLabel="Retry remote fetch"
-                    onPress={() => { setRemoteDisabled(false); setLastRemoteError(null); }}>
-                    <Text style={styles.inlineResetText}>Retry Remote</Text>
+                <View style={{ flexDirection:'row', marginTop:6, gap:8 }}>
+                  <TouchableOpacity onPress={() => { setRemoteDisabled(false); setLastRemoteError(null); setPermissionDiagnosis(null); }} style={[styles.inlineReset,{paddingVertical:4}]}> 
+                    <Text style={styles.inlineResetText}>Retry</Text>
                   </TouchableOpacity>
                 </View>
               )}
             </View>
           )}
-          {deck.length > 0 && index >= deck.length && (
-            <View style={styles.emptyDeck}>            
-              <Text style={styles.emptyDeckText}>No more profiles to view.</Text>
-              {demoMode && (
-                <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
-                  <Text style={styles.inlineResetText}>Start Over</Text>
-                </TouchableOpacity>
+        </Pressable>
+        <View style={styles.postsSection}>
+          <Pressable style={{ flex:1 }} onPress={resetAllNodes}>
+            <View style={styles.postsInner}>
+              {currentUserProfile && !allProfiles.find(p => p.id === currentUserProfile.id && (p.likedPosts || p.liked || p.ideaTitle !== undefined)) && (
+                <View style={styles.onboardingBannerCompact}>
+                  <Text style={styles.onboardingTitle}>Welcome!</Text>
+                  <Text style={styles.onboardingBody}>Create a post so others can discover your project.</Text>
+                </View>
+              )}
+              {deck.length === 0 && (
+                <View style={styles.emptyDeck}>            
+                  <Text style={styles.emptyDeckText}>No profiles available.</Text>
+                  {demoMode && (
+                    <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
+                      <Text style={styles.inlineResetText}>Reset Demo</Text>
+                    </TouchableOpacity>
+                  )}
+                  {remoteDisabled && (
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={{ color: '#f87171', fontSize: 12, textAlign: 'center' }}>Remote disabled.</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+              {deck.length > 0 && index >= deck.length && (
+                <View style={styles.emptyDeck}>            
+                  <Text style={styles.emptyDeckText}>No more profiles.</Text>
+                  {demoMode && (
+                    <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
+                      <Text style={styles.inlineResetText}>Start Over</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+              {deck.length > 0 && index < deck.length && (
+                <>
+                  <ProfileCard post={deck[index]} />
+                  <View style={styles.inlineActionsRow}>
+                    <TouchableOpacity accessibilityLabel="Pass on this builder" style={[styles.rowActionPill, styles.passPill]} onPress={handlePass}>
+                      <Text style={styles.passActionText}>Pass</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      disabled={demoMode}
+                      accessibilityLabel={demoMode ? 'Connect disabled in demo mode' : 'Connect with this builder'}
+                      style={[styles.rowActionPill, styles.connectPill, demoMode && { opacity: 0.4 }]}
+                      onPress={() => handleLike(deck[index].id)}>
+                      <Text style={styles.likeActionText}>{demoMode ? 'Connect (Auth Required)' : 'Connect'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
               )}
             </View>
-          )}
-          {deck.length > 0 && index < deck.length && (
-            <>
-              <ProfileCard post={deck[index]} />
-              <View style={styles.inlineActionsRow}>
-                <TouchableOpacity accessibilityLabel="Pass on this builder" style={[styles.rowActionPill, styles.passPill]} onPress={handlePass}>
-                  <Text style={styles.passActionText}>Pass</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  disabled={demoMode}
-                  accessibilityLabel={demoMode ? 'Connect disabled in demo mode' : 'Connect with this builder'}
-                  style={[styles.rowActionPill, styles.connectPill, demoMode && { opacity: 0.4 }]}
-                  onPress={() => handleLike(deck[index].id)}>
-                  <Text style={styles.likeActionText}>{demoMode ? 'Connect (Auth Required)' : 'Connect'}</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
+          </Pressable>
         </View>
-        {/* Removed fixed bottomActionBar; actions now inline under card */}
-      </Pressable>
-      {lastRemoteError && (
-        <View style={styles.remoteErrorBanner}>
-          <Text style={styles.remoteErrorText}>Remote error: {lastRemoteError}</Text>
-          {permissionDiagnosis && (
-            <Text style={styles.remoteDiagnosisText}>{permissionDiagnosis}</Text>
-          )}
-          {remoteDisabled && (
-            <View style={{ flexDirection:'row', marginTop:6, gap:8 }}>
-              <TouchableOpacity onPress={() => { setRemoteDisabled(false); setLastRemoteError(null); setPermissionDiagnosis(null); }} style={[styles.inlineReset,{paddingVertical:4}]}> 
-                <Text style={styles.inlineResetText}>Retry</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-      )}
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#0d0d0d' },
+  splitContainer: { flex:1 },
+  graphSection: { flex:0.65, backgroundColor:'#121212', borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#1f2937', justifyContent:'center' },
+  postsSection: { flex:0.35, backgroundColor:'#0d0d0d' },
+  postsInner: { flex:1, paddingHorizontal:20, paddingTop:12, paddingBottom:8 },
+  onboardingBannerCompact: { backgroundColor:'#1e293b', padding:10, borderRadius:14, borderWidth:1, borderColor:'#334155', marginBottom:10 },
   graphPlaceholder: {
     paddingHorizontal: 20,
     paddingTop: 12,
@@ -850,7 +930,6 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     backgroundColor: '#6d5bbf', // Heather / light purple tone
     borderWidth: 2,
-    borderColor: '#2ea043'
   },
 nodeSecond: {
     width: 28,
@@ -861,11 +940,11 @@ nodeSecond: {
     borderColor: '#484f58'
   },
   nodeSelected: {
-    shadowColor: '#ffffff',
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 0 },
-    borderColor: '#ffffff'
+    // Removed white/greenish outline highlight; keep subtle scale or glow minimal
+    shadowColor: 'transparent',
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 }
   },
   nodeLabel: { color: 'white', fontWeight: '700', fontSize: 14 },
   nodeLabelSmall: { color: 'white', fontWeight: '600', fontSize: 12 },
