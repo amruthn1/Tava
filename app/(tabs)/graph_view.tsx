@@ -842,158 +842,219 @@ const styles = StyleSheet.create({
     backgroundColor: '#0d0d0d', 
     paddingHorizontal: 20, 
     paddingVertical: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#1f2937',
     minHeight: 300,
   },
   noSelectionContainer: {
-    flex: 1,
+    backgroundColor: '#141414',
+    padding: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#222',
     alignItems: 'center',
     justifyContent: 'center',
   },
   noSelectionText: {
-    color: '#9ca3af',
+    color: '#d1d5db',
     fontSize: 14,
-    fontStyle: 'italic'
+    fontWeight: '500',
+    textAlign: 'center'
   },
   noSelectionSubText: {
-    color: '#6b7280',
+    color: '#9ca3af',
     fontSize: 12,
-    fontStyle: 'italic',
+    textAlign: 'center',
     marginTop: 4
   },
   connectionsContainer: {
     flex: 1,
   },
   connectionsTitle: {
-    color: '#fff',
+    color: '#d1d5db',
     fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 12,
-    paddingBottom: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#374151'
+    fontWeight: '600',
+    marginBottom: 16,
+    letterSpacing: 0.3
   },
   connectionsList: {
     marginTop: 0,
   },
   connectionItem: {
+    backgroundColor: '#141414',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#222',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1f2937',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#374151',
   },
   connectionInfo: {
     flex: 1,
     marginRight: 12,
   },
   connectionName: {
-    color: '#fff',
-    fontSize: 14,
+    color: '#ffffff',
+    fontSize: 15,
     fontWeight: '600',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   connectionEmail: {
-    color: '#9ca3af',
+    color: '#94a3b8',
     fontSize: 12,
     marginBottom: 4,
   },
   connectionIdea: {
     color: '#34d399',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   connectionInterests: {
     color: '#d1d5db',
     fontSize: 11,
-    fontStyle: 'italic',
+    fontWeight: '500',
+    letterSpacing: 0.3,
   },
   connectionNode: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#6d5bbf',
-    borderWidth: 2,
-    borderColor: '#8b5fbf',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
     alignItems: 'center',
     justifyContent: 'center',
   },
   connectionNodeText: {
-    color: 'white',
+    color: '#93c5fd',
     fontWeight: '700',
-    fontSize: 12,
+    fontSize: 14,
   },
   nodeDetailsScrollView: {
     flex: 1,
   },
   backButton: {
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    paddingHorizontal: 12,
-    marginBottom: 12,
+    borderRadius: 10,
+    marginBottom: 16,
+    alignSelf: 'flex-start',
   },
   backButtonText: {
-    color: '#60a5fa',
-    fontSize: 13,
-    fontWeight: '500',
+    color: '#93c5fd',
+    fontSize: 12,
+    fontWeight: '600',
   },
   nodeDetailsContainer: {
-    flex: 1,
+    backgroundColor: '#141414',
+    padding: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#222',
   },
   detailsName: { 
-    color: '#fff', 
-    fontSize: 18, 
+    color: '#ffffff', 
+    fontSize: 20, 
     fontWeight: '700',
-    marginBottom: 4
+    marginBottom: 8
   },
   detailsEmail: { 
-    color: '#9ca3af', 
+    color: '#94a3b8', 
     fontSize: 13, 
     fontWeight: '500',
-    marginBottom: 8
+    marginBottom: 12
   },
   detailsIdeaTitle: { 
     color: '#34d399', 
-    fontSize: 15, 
+    fontSize: 16, 
     fontWeight: '600',
-    marginBottom: 4
+    marginBottom: 8
   },
   detailsIdeaDesc: { 
-    color: '#cbd5e1', 
+    color: '#d1d5db', 
     fontSize: 13, 
     lineHeight: 18,
-    marginBottom: 12
+    marginBottom: 16
   },
   interestsContainer: {
-    marginTop: 4
+    backgroundColor: '#1b1f24',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2a3139',
+    marginBottom: 16,
   },
   interestsLabel: { 
-    color: '#6b7280', 
-    fontSize: 12, 
+    color: '#9ca3af', 
+    fontSize: 11, 
     fontWeight: '600',
-    marginBottom: 4
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5
   },
   interestsText: { 
     color: '#d1d5db', 
     fontSize: 12, 
-    lineHeight: 16
+    lineHeight: 16,
+    fontWeight: '500',
+    letterSpacing: 0.3
   },
   removeConnectionButton: {
-    backgroundColor: '#dc2626',
+    backgroundColor: '#2a1a1a',
+    borderWidth: 1,
+    borderColor: '#442222',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderRadius: 8,
-    marginTop: 16,
+    borderRadius: 10,
     alignItems: 'center'
   },
   removeConnectionButtonText: {
-    color: '#ffffff',
+    color: '#f87171',
     fontSize: 14,
     fontWeight: '600'
+  },
+  divider: { 
+    height: 1, 
+    backgroundColor: '#1f2937', 
+    marginVertical: 18, 
+    opacity: 0.6 
+  },
+  sectionCard: { 
+    backgroundColor: '#141414', 
+    padding: 14, 
+    borderRadius: 14, 
+    borderWidth: 1, 
+    borderColor: '#222', 
+    marginBottom: 14 
+  },
+  sectionBody: { 
+    color: '#ddd', 
+    fontSize: 13, 
+    lineHeight: 18 
+  },
+  chipsRow: { 
+    flexDirection: 'row', 
+    flexWrap: 'wrap', 
+    gap: 8, 
+    marginBottom: 12 
+  },
+  chip: { 
+    backgroundColor: '#1b1f24', 
+    paddingHorizontal: 12, 
+    paddingVertical: 6, 
+    borderRadius: 16, 
+    borderWidth: 1, 
+    borderColor: '#2a3139' 
+  },
+  chipText: { 
+    color: '#d1d5db', 
+    fontSize: 11, 
+    fontWeight: '500', 
+    letterSpacing: 0.3 
   },
   graphPlaceholder: {
     paddingHorizontal: 20,
