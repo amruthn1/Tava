@@ -380,9 +380,9 @@ export default function MapScreen() {
         </Mapbox.MapView>
       </View>
       <View style={styles.buttonStack} pointerEvents={isChatOpen ? 'none' : 'auto'}>
-        <TouchableOpacity style={[styles.chatButton, styles.stackedButton]} onPress={() => setIsChatOpen(true)} activeOpacity={0.8}>
+        {/* <TouchableOpacity style={[styles.chatButton, styles.stackedButton]} onPress={() => setIsChatOpen(true)} activeOpacity={0.8}>
           <Ionicons name="chatbubbles" size={20} color="white" />
-        </TouchableOpacity>
+        </TouchableOpacity> */}
         <TouchableOpacity style={[styles.recenterButton, styles.stackedButton]} onPress={handleRecenter} accessibilityLabel="Recenter map">
           <Ionicons name="locate" size={20} color="#fff" />
         </TouchableOpacity>
