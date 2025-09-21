@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import SearchProjects from '../components/search-projects';
 import SwipeFull from '../components/swipe-full';
 
@@ -33,7 +33,10 @@ export default function ExploreScreen() {
         {mode === 'search' ? (
           <SearchProjects />
         ) : (
-          <SwipeFull />
+          <>
+            <Text style={styles.swipeTagline}>Open to new ideas?</Text>
+            <SwipeFull />
+          </>
         )}
       </View>
     </SafeAreaView>
@@ -72,4 +75,12 @@ const styles = StyleSheet.create({
   toggleText: { color: '#9ca3af', fontWeight: '600' },
   toggleTextActive: { color: 'white' },
   content: { flex: 1 },
+  swipeTagline: {
+    color: '#9CA3AF',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 10 : 8,
+    paddingBottom: 10,
+    fontSize: 16,
+    fontStyle: 'normal',
+  },
 });

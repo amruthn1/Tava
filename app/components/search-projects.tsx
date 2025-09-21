@@ -1,14 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
-import Constants from 'expo-constants';
-import { OpenAI } from 'openai';
-import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '@/constants/firebase';
 import { POSTS_COLLECTION, Post } from '@/types/post';
+import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { OpenAI } from 'openai';
+import { useEffect, useMemo, useState } from 'react';
+import { FlatList, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 interface UserLite { id: string; displayName?: string | null; email?: string | null; interests?: string[] }
 
 export default function SearchProjects() {
+  const router = useRouter();
   const [query, setQuery] = useState('');
   const [posts, setPosts] = useState<Post[]>([]);
   const [users, setUsers] = useState<Record<string, UserLite>>({});
@@ -225,16 +227,18 @@ export default function SearchProjects() {
   const renderItem = ({ item }: { item: Post }) => {
     const author = users[item.authorId];
     return (
-      <View style={styles.card}>
-        <Text style={styles.title} numberOfLines={2}>{item.title || 'Untitled Project'}</Text>
-        {!!author && (
-          <Text style={styles.author} numberOfLines={1}>{author.displayName || author.email || 'Builder'}</Text>
-        )}
-        {!!item.description && (
-          <Text style={styles.desc} numberOfLines={3}>{item.description}</Text>
-        )}
-        <Text style={styles.meta}>{new Date(item.createdAt).toLocaleDateString()}</Text>
-      </View>
+      <TouchableOpacity activeOpacity={0.85} onPress={() => router.push((`/project/${item.id}`) as any)}>
+        <View style={styles.card}>
+          <Text style={styles.title} numberOfLines={2}>{item.title || 'Untitled Project'}</Text>
+          {!!author && (
+            <Text style={styles.author} numberOfLines={1}>{author.displayName || author.email || 'Builder'}</Text>
+          )}
+          {!!item.description && (
+            <Text style={styles.desc} numberOfLines={3}>{item.description}</Text>
+          )}
+          <Text style={styles.meta}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+        </View>
+      </TouchableOpacity>
     );
   };
 
@@ -243,7 +247,7 @@ export default function SearchProjects() {
       <View style={styles.searchRow}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search projects..."
+          placeholder="Have something in mind?"
           placeholderTextColor="#888"
           value={query}
           onChangeText={(t) => { setQuery(t); setHasSubmitted(false); setBestId(null); setRankError(null); }}
@@ -266,22 +270,24 @@ export default function SearchProjects() {
             if (!p) return null;
             const author = users[p.authorId];
             return (
-              <View style={[styles.card, { marginTop: 8 }]}>
-                <Text style={styles.title} numberOfLines={2}>{p.title || 'Untitled Project'}</Text>
-                {!!author && (
-                  <Text style={styles.author} numberOfLines={1}>{author.displayName || author.email || 'Builder'}</Text>
-                )}
-                {!!p.description && (
-                  <Text style={styles.desc} numberOfLines={3}>{p.description}</Text>
-                )}
-                <Text style={styles.meta}>{new Date(p.createdAt).toLocaleDateString()}</Text>
-              </View>
+              <TouchableOpacity activeOpacity={0.85} onPress={() => router.push((`/project/${p.id}`) as any)}>
+                <View style={[styles.card, { marginTop: 8 }]}> 
+                  <Text style={styles.title} numberOfLines={2}>{p.title || 'Untitled Project'}</Text>
+                  {!!author && (
+                    <Text style={styles.author} numberOfLines={1}>{author.displayName || author.email || 'Builder'}</Text>
+                  )}
+                  {!!p.description && (
+                    <Text style={styles.desc} numberOfLines={3}>{p.description}</Text>
+                  )}
+                  <Text style={styles.meta}>{new Date(p.createdAt).toLocaleDateString()}</Text>
+                </View>
+              </TouchableOpacity>
             );
           })()}
         </View>
       )}
       <FlatList
-        data={ranked}
+        data={hasSubmitted ? ranked : posts}
         keyExtractor={p => p.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
@@ -308,6 +314,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
     fontSize: 16,
+    fontStyle: 'normal',
   },
   listContent: { padding: 16, paddingTop: 8 },
   searchHint: { color: '#9CA3AF', fontSize: 12, marginTop: 6 },
