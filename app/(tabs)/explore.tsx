@@ -30,7 +30,8 @@ interface BuilderProfile {
 // (Removed Post model for simplified profile-only swipe phase)
 
 const SCREEN = Dimensions.get('window');
-const CARD_AREA_HEIGHT = SCREEN.height * 0.6; // allocate space for swipe deck leaving room for footer
+// Removed fixed CARD_AREA_HEIGHT – deck/post area will flex to fill available space beneath graph and above action bar
+const CARD_AREA_HEIGHT = SCREEN.height * 0.6; // (legacy) retained only if referenced elsewhere
 const LOCAL_USER_ID = 'local-current-user'; // Stable identifier so effects do not loop
 // Lower threshold so lighter drags dismiss; use velocity fallback as well.
 // (Swipe disabled in fallback mode; keeping constants commented for future restore)
@@ -61,11 +62,11 @@ interface PostItem { id: string; title: string; description?: string | null; aut
 // Simple static card (no gestures)
 function ProfileCard({ profile, post }: { profile?: BuilderProfile; post?: PostItem }) {
   return (
-    <View style={styles.card}>      
-      <View style={{ flex: 1 }}>
+    <View style={styles.card}>
+      <View style={styles.cardInner}>        
         <Text style={styles.ideaTitle}>{post ? (post.title || 'Untitled Project') : (profile?.ideaTitle || 'Untitled Idea')}</Text>
         <Text style={styles.author}>{post ? (post.authorName || 'Anonymous Builder') : (profile?.displayName || 'Anonymous Builder')}</Text>
-        <Text style={styles.description} numberOfLines={6}>
+        <Text style={styles.description} numberOfLines={8}>
           {post ? (post.description || 'No description provided.') : (profile?.ideaDescription || 'No description provided yet.')}
         </Text>
       </View>
@@ -430,67 +431,70 @@ export default function ExploreBuilders() {
   return (
     <SafeAreaView style={styles.safeArea}>
       {renderGraph()}
-      <View style={styles.deckArea}>
-        {currentUserProfile && !allProfiles.find(p => p.id === currentUserProfile.id && (p.likedPosts || p.liked || p.ideaTitle !== undefined)) && (
-          <View style={{ position:'absolute', top:8, left:16, right:16, backgroundColor:'#1e293b', padding:10, borderRadius:12, borderWidth:1, borderColor:'#334155' }}>
-            <Text style={{ color:'#93c5fd', fontSize:12, fontWeight:'600', marginBottom:4 }}>Welcome!</Text>
-            <Text style={{ color:'#cbd5e1', fontSize:12 }}>Create a post so others can discover your project. Your own profile doc was just initialized.</Text>
-          </View>
-        )}
-        {deck.length === 0 && (
-          <View style={styles.emptyDeck}>            
-            <Text style={styles.emptyDeckText}>No profiles available.</Text>
-            {demoMode && (
-              <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
-                <Text style={styles.inlineResetText}>Reset Demo</Text>
-              </TouchableOpacity>
-            )}
-            {remoteDisabled && (
-              <View style={{ marginTop: 12 }}>
-                <Text style={{ color: '#f87171', fontSize: 12, textAlign: 'center' }}>Remote data disabled (permissions).</Text>
+      <View style={styles.flexDeckWrapper}>
+        <View style={styles.flexCardRegion}>
+          {currentUserProfile && !allProfiles.find(p => p.id === currentUserProfile.id && (p.likedPosts || p.liked || p.ideaTitle !== undefined)) && (
+            <View style={styles.onboardingBanner}>
+              <Text style={styles.onboardingTitle}>Welcome!</Text>
+              <Text style={styles.onboardingBody}>Create a post so others can discover your project. Your own profile doc was just initialized.</Text>
+            </View>
+          )}
+          {deck.length === 0 && (
+            <View style={styles.emptyDeck}>            
+              <Text style={styles.emptyDeckText}>No profiles available.</Text>
+              {demoMode && (
+                <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
+                  <Text style={styles.inlineResetText}>Reset Demo</Text>
+                </TouchableOpacity>
+              )}
+              {remoteDisabled && (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={{ color: '#f87171', fontSize: 12, textAlign: 'center' }}>Remote data disabled (permissions).</Text>
+                  <TouchableOpacity
+                    style={[styles.inlineReset,{marginTop:8}]}
+                    accessibilityLabel="Retry remote fetch"
+                    onPress={() => { setRemoteDisabled(false); setLastRemoteError(null); }}>
+                    <Text style={styles.inlineResetText}>Retry Remote</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
+          {deck.length > 0 && index >= deck.length && (
+            <View style={styles.emptyDeck}>            
+              <Text style={styles.emptyDeckText}>No more profiles to view.</Text>
+              {demoMode && (
+                <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
+                  <Text style={styles.inlineResetText}>Start Over</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+          {deck.length > 0 && index < deck.length && (
+            <>
+              <ProfileCard post={deck[index]} />
+              <View style={styles.inlineActionsRow}>
+                <TouchableOpacity accessibilityLabel="Pass on this builder" style={[styles.rowActionPill, styles.passPill]} onPress={handlePass}>
+                  <Text style={styles.passActionText}>Pass</Text>
+                </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.inlineReset,{marginTop:8}]}
-                  accessibilityLabel="Retry remote fetch"
-                  onPress={() => { setRemoteDisabled(false); setLastRemoteError(null); }}>
-                  <Text style={styles.inlineResetText}>Retry Remote</Text>
+                  disabled={demoMode}
+                  accessibilityLabel={demoMode ? 'Connect disabled in demo mode' : 'Connect with this builder'}
+                  style={[styles.rowActionPill, styles.connectPill, demoMode && { opacity: 0.4 }]}
+                  onPress={() => handleLike(deck[index].id)}>
+                  <Text style={styles.likeActionText}>{demoMode ? 'Connect (Auth Required)' : 'Connect'}</Text>
                 </TouchableOpacity>
               </View>
-            )}
-          </View>
-        )}
-        {deck.length > 0 && index >= deck.length && (
-          <View style={styles.emptyDeck}>            
-            <Text style={styles.emptyDeckText}>No more profiles to view.</Text>
-            {demoMode && (
-              <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
-                <Text style={styles.inlineResetText}>Start Over</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-        {deck.length > 0 && index < deck.length && (
-          <ProfileCard post={deck[index]} />
-        )}
-      </View>
-      {deck.length > 0 && index < deck.length && (
-        <View style={styles.actionsOverlay}>
-          <TouchableOpacity accessibilityLabel="Pass on this builder" style={[styles.smallActionButton, styles.passButton]} onPress={handlePass}>
-            <Text style={styles.passActionText}>Pass</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            disabled={demoMode}
-            accessibilityLabel={demoMode ? 'Connect disabled in demo mode' : 'Connect with this builder'}
-            style={[styles.smallActionButton, styles.likeButton, demoMode && { opacity: 0.4 }]}
-            onPress={() => handleLike(deck[index].id)}>
-            <Text style={styles.likeActionText}>{demoMode ? 'Connect (Auth Required)' : 'Connect'}</Text>
-          </TouchableOpacity>
+            </>
+          )}
         </View>
-      )}
+        {/* Removed fixed bottomActionBar; actions now inline under card */}
+      </View>
       {lastRemoteError && (
-        <View style={{ position:'absolute', top: 8, left: 0, right: 0, alignItems:'center' }}>
-          <Text style={{ color:'#f87171', fontSize:12 }}>Remote error: {lastRemoteError}</Text>
+        <View style={styles.remoteErrorBanner}>
+          <Text style={styles.remoteErrorText}>Remote error: {lastRemoteError}</Text>
           {permissionDiagnosis && (
-            <Text style={{ color:'#fda4af', fontSize:11, marginTop:4, paddingHorizontal:12, textAlign:'center' }}>{permissionDiagnosis}</Text>
+            <Text style={styles.remoteDiagnosisText}>{permissionDiagnosis}</Text>
           )}
           {remoteDisabled && (
             <View style={{ flexDirection:'row', marginTop:6, gap:8 }}>
@@ -586,14 +590,15 @@ const styles = StyleSheet.create({
   graphHint: { color: '#666', fontSize: 12, marginTop: 4 },
   graphTitle: { color: 'white', fontSize: 18, fontWeight: '600' },
   graphSubtitle: { color: '#aaa', marginTop: 4, fontSize: 13 },
-  deckArea: { height: CARD_AREA_HEIGHT, width: '100%', alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  deckArea: { height: CARD_AREA_HEIGHT, width: '100%', alignItems: 'center', justifyContent: 'center', position: 'relative' }, // legacy style (unused for new flex layout)
+  flexDeckWrapper: { flex: 1, width: '100%', position: 'relative' },
+  flexCardRegion: { flex: 1, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
   emptyDeck: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   emptyDeckText: { color: '#aaa', fontSize: 16, textAlign: 'center' },
   inlineReset: { marginTop: 14, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18, backgroundColor: '#1f2937', borderWidth: 1, borderColor: '#334155' },
   inlineResetText: { color: '#60a5fa', fontSize: 13, fontWeight: '500' },
   cardContainer: { position: 'absolute', width: SCREEN.width * 0.9, height: '100%' },
   card: {
-    flex: 1,
     backgroundColor: '#1e1e1e',
     borderRadius: 20,
     padding: 20,
@@ -603,7 +608,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
+    maxHeight: '75%', // ensure space for bottom bar
   },
+  cardInner: { flexGrow: 1 },
   ideaTitle: { fontSize: 20, fontWeight: '700', color: 'white', marginBottom: 6 },
   author: { fontSize: 14, fontWeight: '500', color: '#bbb', marginBottom: 12 },
   description: { fontSize: 14, color: '#ddd', lineHeight: 20 },
@@ -646,5 +653,17 @@ const styles = StyleSheet.create({
   ,resetButton: { marginTop: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155' },
   resetButtonText: { color: '#3b82f6', fontSize: 12, fontWeight: '600' }
   ,actionsOverlay: { position: 'absolute', bottom: 24, right: 20, flexDirection: 'column', alignItems: 'flex-end', gap: 12 },
-  smallActionButton: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 30, minWidth: 100, alignItems: 'center' }
+  smallActionButton: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 30, minWidth: 100, alignItems: 'center' },
+  // (Removed bottomActionBar/actionPill; replaced by inlineActionsRow under card)
+  inlineActionsRow: { flexDirection: 'row', marginTop: 16, gap: 16 },
+  rowActionPill: { flex: 1, alignItems: 'center', paddingVertical: 14, borderRadius: 40 },
+  passPill: { backgroundColor: '#2a1a1a', borderWidth: 1, borderColor: '#442222' },
+  connectPill: { backgroundColor: '#142a20', borderWidth: 1, borderColor: '#1f4736' },
+  bottomBarEmptyText: { color: '#555', fontSize: 13, textAlign: 'center', flex: 1, paddingVertical: 6 }, // legacy
+  onboardingBanner: { position:'absolute', top:0, left:0, right:0, backgroundColor:'#1e293b', padding:12, borderRadius:16, borderWidth:1, borderColor:'#334155', zIndex:10 },
+  onboardingTitle: { color:'#93c5fd', fontSize:12, fontWeight:'700', marginBottom:4 },
+  onboardingBody: { color:'#cbd5e1', fontSize:12, lineHeight:16 },
+  remoteErrorBanner: { position:'absolute', top: 8, left: 0, right: 0, alignItems:'center' },
+  remoteErrorText: { color:'#f87171', fontSize:12 },
+  remoteDiagnosisText: { color:'#fda4af', fontSize:11, marginTop:4, paddingHorizontal:12, textAlign:'center' }
 });
