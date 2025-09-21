@@ -2,7 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { getApp, getApps, initializeApp } from 'firebase/app';
-import { getAuth, initializeAuth, signInWithEmailAndPassword, type Auth } from 'firebase/auth';
+import { getAuth, initializeAuth, signInAnonymously, signInWithEmailAndPassword, type Auth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { loadCredentials } from './credentialStore';
 
@@ -86,6 +86,19 @@ export async function autoSignInIfNeeded(): Promise<boolean> {
     return true;
   } catch (e) {
     console.warn('[Auth] autoSignIn failed', e);
+    return false;
+  }
+}
+
+// Ensure we have at least an anonymous authenticated context so Firestore rules requiring auth can allow reads.
+export async function ensureAtLeastAnonymousAuth(): Promise<boolean> {
+  if (auth.currentUser) return true;
+  try {
+    await signInAnonymously(auth);
+    console.log('[Auth] Anonymous sign-in successful');
+    return true;
+  } catch (e) {
+    console.warn('[Auth] Anonymous sign-in failed', e);
     return false;
   }
 }

@@ -4,7 +4,9 @@
 //  - Move like handling back to updateDoc w/ optimistic UI
 //  - Add security rules to constrain writes
 //  - Consider a Cloud Function to derive mutual matches
-// import { auth, db } from '@/constants/firebase';
+import { auth, autoSignInIfNeeded, db, ensureAtLeastAnonymousAuth } from '@/constants/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { arrayUnion, collection, doc, getDoc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Dimensions, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -18,6 +20,8 @@ interface BuilderProfile {
   ideaTitle?: string;
   ideaDescription?: string;
   liked?: string[]; // people this user liked
+  likedPosts?: string[]; // posts liked (connect actions)
+  passedPosts?: string[]; // posts passed
   // Internal: when deck item represents a post, we store underlying author id here
   _authorId?: string;
 }
@@ -52,15 +56,17 @@ const INITIAL_PROFILES: BuilderProfile[] = [
 
 // (Removed INITIAL_POSTS list)
 
+interface PostItem { id: string; title: string; description?: string | null; authorId: string; authorName?: string; createdAt?: number; }
+
 // Simple static card (no gestures)
-function ProfileCard({ profile }: { profile: BuilderProfile }) {
+function ProfileCard({ profile, post }: { profile?: BuilderProfile; post?: PostItem }) {
   return (
     <View style={styles.card}>      
       <View style={{ flex: 1 }}>
-        <Text style={styles.ideaTitle}>{profile.ideaTitle || 'Untitled Idea'}</Text>
-        <Text style={styles.author}>{profile.displayName || 'Anonymous Builder'}</Text>
+        <Text style={styles.ideaTitle}>{post ? (post.title || 'Untitled Project') : (profile?.ideaTitle || 'Untitled Idea')}</Text>
+        <Text style={styles.author}>{post ? (post.authorName || 'Anonymous Builder') : (profile?.displayName || 'Anonymous Builder')}</Text>
         <Text style={styles.description} numberOfLines={6}>
-          {profile.ideaDescription || 'No description provided yet.'}
+          {post ? (post.description || 'No description provided.') : (profile?.ideaDescription || 'No description provided yet.')}
         </Text>
       </View>
     </View>
@@ -70,21 +76,140 @@ function ProfileCard({ profile }: { profile: BuilderProfile }) {
 export default function ExploreBuilders() {
   const [currentUserProfile, setCurrentUserProfile] = useState<BuilderProfile | null>(null);
   const [allProfiles, setAllProfiles] = useState<BuilderProfile[]>([]);
-  const [deck, setDeck] = useState<BuilderProfile[]>([]);
+  const [posts, setPosts] = useState<PostItem[]>([]);
+  const [deck, setDeck] = useState<PostItem[]>([]);
   const [index, setIndex] = useState(0); // pointer into deck
-  // NOTE: In local mode we assume a signed-in user; once Firebase restored, swap back to auth.currentUser
-  const currentUserId = LOCAL_USER_ID;
+  const [remoteDisabled, setRemoteDisabled] = useState(false); // toggled if permission denied
+  const [lastRemoteError, setLastRemoteError] = useState<string | null>(null);
+  const [permissionDiagnosis, setPermissionDiagnosis] = useState<string | null>(null); // human-friendly classification
+  // Reactive firebase user state (will update after onAuthStateChanged fires)
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(auth.currentUser);
+  const demoMode = !firebaseUser; // if not signed in we're in demo/fallback
+  const currentUserId = firebaseUser ? firebaseUser.uid : LOCAL_USER_ID;
   // Deck now directly uses profiles instead of posts
   const [initialized, setInitialized] = useState(false);
 
-  // Local initialize dummy data (runs once)
+  // Auth state listener & optional auto sign-in (dev convenience)
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, u => {
+      setFirebaseUser(u);
+      console.log('[Explore] Auth state changed ->', u ? (u.isAnonymous ? 'anonymous' : u.uid) : 'null');
+    });
+    // Attempt silent credential sign-in first; if none, try anonymous to satisfy rules.
+    (async () => {
+      const hadCreds = await autoSignInIfNeeded?.();
+      if (!hadCreds) {
+        await ensureAtLeastAnonymousAuth?.();
+      }
+    })();
+    return () => unsub();
+  }, []);
+
+  // Ensure a user profile document exists when authenticated
+  useEffect(() => {
+    (async () => {
+      if (!firebaseUser) return;
+      try {
+        const ref = doc(db, 'users', firebaseUser.uid);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) {
+          await setDoc(ref, {
+            displayName: firebaseUser.isAnonymous ? 'Anon' : (firebaseUser.email || 'User'),
+            ideaTitle: null,
+            ideaDescription: null,
+            liked: [],
+            likedPosts: [],
+            passedPosts: [],
+            createdAt: Date.now()
+          });
+          console.log('[Explore] Created new user profile for', firebaseUser.uid);
+        }
+      } catch (e) {
+        console.warn('[Explore] Failed to ensure user profile', e);
+      }
+    })();
+  }, [firebaseUser]);
+
+  // Local initialize dummy data (runs once) – used only for demo mode; once authenticated we rely on remote docs
   useEffect(() => {
     if (initialized) return;
-    // Inject local current user so we can mutate its liked array and trigger graph updates.
-    const localUser: BuilderProfile = { id: currentUserId, displayName: 'You', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
+    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
     setAllProfiles([localUser, ...INITIAL_PROFILES]);
     setInitialized(true);
-  }, [initialized, currentUserId]);
+  }, [initialized]);
+
+  // Firestore subscription (users collection) – only when authenticated to avoid permission-denied spam
+  useEffect(() => {
+    if (!firebaseUser || remoteDisabled) return; // skip while unauthenticated or previously disabled
+    let unsubscribe: (() => void) | undefined;
+    unsubscribe = onSnapshot(
+      collection(db, 'users'),
+      snapshot => {
+        console.log('[Explore] Received users snapshot (count=', snapshot.size, ')');
+        const remoteProfiles: BuilderProfile[] = snapshot.docs.map(docSnap => {
+          const data: any = docSnap.data() || {};
+          return {
+            id: docSnap.id,
+            displayName: data.displayName,
+            ideaTitle: data.ideaTitle,
+            ideaDescription: data.ideaDescription,
+            liked: Array.isArray(data.liked) ? data.liked : []
+          };
+        });
+        setAllProfiles(remoteProfiles);
+        setLastRemoteError(null);
+      },
+      async error => {
+        console.warn('Firestore users subscription error; staying in demo mode fallback', error);
+        setLastRemoteError(error?.message || String(error));
+        if (error?.code === 'permission-denied') {
+          setRemoteDisabled(true);
+          // Attempt classification: is collection list blocked but doc read allowed? Only if we have an auth user.
+            if (firebaseUser) {
+              try {
+                const meDocRef = doc(db, 'users', firebaseUser.uid);
+                const meSnap = await getDoc(meDocRef);
+                if (meSnap.exists()) {
+                  setPermissionDiagnosis('Collection list blocked by rules; direct document read allowed. Adjust rules to permit list or query.');
+                } else {
+                  setPermissionDiagnosis('User document not readable or does not exist. Rules likely require different auth or the doc is missing.');
+                }
+              } catch (inner) {
+                setPermissionDiagnosis('Direct document read also denied. Enable anonymous or authenticated read in Firestore rules.');
+              }
+            } else {
+              setPermissionDiagnosis('No auth user present; enable anonymous auth or relax read rules.');
+            }
+        }
+      }
+    );
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, [firebaseUser, remoteDisabled]);
+
+  // Posts subscription (independent). If permission denied we still continue with demo user data only.
+  useEffect(() => {
+    if (!firebaseUser || remoteDisabled) return;
+    const unsub = onSnapshot(
+      collection(db, 'posts'),
+      snap => {
+        const items: PostItem[] = snap.docs.map(d => {
+          const data: any = d.data() || {};
+          return {
+            id: d.id,
+            title: data.title,
+            description: data.description,
+            authorId: data.authorId,
+            createdAt: data.createdAt?.toMillis?.() || Date.now()
+          };
+        });
+        setPosts(items);
+      },
+      err => {
+        console.warn('[Explore] posts listener error', err);
+      }
+    );
+    return () => unsub();
+  }, [firebaseUser, remoteDisabled]);
 
   // (Removed remote posts seeding – handled in local initialize above)
 
@@ -94,60 +219,93 @@ export default function ExploreBuilders() {
   // Subscribe to posts
   // (Removed Firestore subscriptions in local dummy mode)
 
-  // Derive current user profile (if signed in) and build deck from profiles array directly.
+  // Derive current user profile (if signed in) and build deck from posts.
   useEffect(() => {
     const me = allProfiles.find(p => p.id === currentUserId) || null;
     setCurrentUserProfile(me);
-    if (!me) return;
-    const likedSet = new Set(me.liked || []);
-    const deckItems: BuilderProfile[] = allProfiles.filter(p => p.id !== me.id && !likedSet.has(p.id));
-    setDeck(deckItems);
+    if (!me) {
+      // Fallback placeholder so new users can still see posts
+      const placeholder: BuilderProfile = { id: currentUserId, displayName: 'You', likedPosts: [], passedPosts: [] };
+      setCurrentUserProfile(placeholder);
+      const filtered = posts.filter(p => p.authorId !== currentUserId);
+      const enriched = filtered.map(p => ({ ...p, authorName: allProfiles.find(u => u.id === p.authorId)?.displayName }));
+      enriched.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+      setDeck(enriched);
+      setIndex(0);
+      return;
+    }
+    const passed = new Set(me.passedPosts || []);
+    const likedPosts = new Set(me.likedPosts || []);
+    const filtered = posts.filter(p => p.authorId !== me.id && !passed.has(p.id) && !likedPosts.has(p.id));
+    // Enrich with author display name if available
+    const enriched = filtered.map(p => ({ ...p, authorName: allProfiles.find(u => u.id === p.authorId)?.displayName }));
+    // Simple ordering: newest first
+    enriched.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+    setDeck(enriched);
     setIndex(0);
-  }, [allProfiles, currentUserId]);
+  }, [allProfiles, currentUserId, posts]);
 
   const advance = useCallback(() => {
     setIndex(prev => prev + 1);
   }, []);
 
-  const handleLike = useCallback((id: string) => {
-    setAllProfiles(prev => prev.map(p => {
-      if (p.id === currentUserId) {
-        const liked = new Set(p.liked || []);
-        liked.add(id);
-        return { ...p, liked: Array.from(liked) };
-      }
-      return p;
-    }));
+  const handleLike = useCallback(async (postId: string) => {
+    if (demoMode) {
+      setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])) } : p));
+      advance();
+      return;
+    }
+    setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])) } : p));
     advance();
-  }, [currentUserId, advance]);
+    // Firestore write (will be no-op until auth fallback replaced with real user id)
+    try {
+      await updateDoc(doc(db, 'users', currentUserId), { likedPosts: arrayUnion(postId) });
+    } catch (e) {
+      console.warn('Failed to persist like; will resync on next snapshot', e);
+      // (Optional) Could implement rollback or refresh logic here.
+    }
+  }, [currentUserId, advance, demoMode]);
 
   const handlePass = useCallback(() => {
+    const current = deck[index];
+    if (current) {
+      if (demoMode) {
+        setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, passedPosts: Array.from(new Set([...(p.passedPosts||[]), current.id])) } : p));
+      } else {
+        // optimistic
+        setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, passedPosts: Array.from(new Set([...(p.passedPosts||[]), current.id])) } : p));
+        updateDoc(doc(db, 'users', currentUserId), { passedPosts: arrayUnion(current.id) }).catch(e => console.warn('Failed pass write', e));
+      }
+    }
     advance();
-  }, [advance]);
+  }, [advance, deck, index, currentUserId, demoMode]);
 
   // Reset demo: restore original dummy profiles & posts and clear likes
   const resetDemo = useCallback(() => {
-    const localUser: BuilderProfile = { id: currentUserId, displayName: 'You', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
+    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
     setAllProfiles([localUser, ...INITIAL_PROFILES]);
     setDeck([]);
     setCurrentUserProfile(localUser);
     setIndex(0);
-  }, [currentUserId]);
+  }, []);
 
   // Placeholder graph nodes (will be replaced in next step)
   // Build first & second degree sets for graph
   const graphData = useMemo(() => {
     if (!currentUserProfile) return { first: [] as BuilderProfile[], second: [] as BuilderProfile[] };
-    const likedIds = new Set(currentUserProfile.liked || []);
-    const first = allProfiles.filter(p => likedIds.has(p.id));
-    // Collect second-degree (liked of first) – flatten liked arrays of first-degree
-    const secondIds = new Set<string>();
-    first.forEach(f => (f.liked || []).forEach(id => {
-      if (id !== currentUserProfile.id && !likedIds.has(id)) secondIds.add(id);
+    // Now graph is based on authors liked via their posts (likedPosts -> map to authors)
+    const likedPostIds = new Set(currentUserProfile.likedPosts || []);
+    const likedAuthors = new Set<string>();
+    posts.forEach(p => { if (likedPostIds.has(p.id)) likedAuthors.add(p.authorId); });
+    const first = allProfiles.filter(p => likedAuthors.has(p.id));
+    const secondAuthorIds = new Set<string>();
+    first.forEach(f => (f.likedPosts || []).forEach(lpId => {
+      const post = posts.find(pp => pp.id === lpId);
+      if (post && post.authorId !== currentUserProfile.id && !likedAuthors.has(post.authorId)) secondAuthorIds.add(post.authorId);
     }));
-    const second = allProfiles.filter(p => secondIds.has(p.id));
+    const second = allProfiles.filter(p => secondAuthorIds.has(p.id));
     return { first, second };
-  }, [currentUserProfile, allProfiles]);
+  }, [currentUserProfile, allProfiles, posts]);
 
   // Radial layout helpers
   const renderGraph = () => {
@@ -260,9 +418,11 @@ export default function ExploreBuilders() {
         {graphData.first.length === 0 && (
           <Text style={styles.graphHint}>Swipe right to start building your graph.</Text>
         )}
-        <TouchableOpacity accessibilityLabel="Reset demo network" onPress={resetDemo} style={styles.resetButton}>
-          <Text style={styles.resetButtonText}>Reset Demo</Text>
-        </TouchableOpacity>
+        {demoMode && (
+          <TouchableOpacity accessibilityLabel="Reset demo network" onPress={resetDemo} style={styles.resetButton}>
+            <Text style={styles.resetButtonText}>Reset Demo</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -271,24 +431,45 @@ export default function ExploreBuilders() {
     <SafeAreaView style={styles.safeArea}>
       {renderGraph()}
       <View style={styles.deckArea}>
+        {currentUserProfile && !allProfiles.find(p => p.id === currentUserProfile.id && (p.likedPosts || p.liked || p.ideaTitle !== undefined)) && (
+          <View style={{ position:'absolute', top:8, left:16, right:16, backgroundColor:'#1e293b', padding:10, borderRadius:12, borderWidth:1, borderColor:'#334155' }}>
+            <Text style={{ color:'#93c5fd', fontSize:12, fontWeight:'600', marginBottom:4 }}>Welcome!</Text>
+            <Text style={{ color:'#cbd5e1', fontSize:12 }}>Create a post so others can discover your project. Your own profile doc was just initialized.</Text>
+          </View>
+        )}
         {deck.length === 0 && (
           <View style={styles.emptyDeck}>            
             <Text style={styles.emptyDeckText}>No profiles available.</Text>
-            <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
-              <Text style={styles.inlineResetText}>Reset Demo</Text>
-            </TouchableOpacity>
+            {demoMode && (
+              <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
+                <Text style={styles.inlineResetText}>Reset Demo</Text>
+              </TouchableOpacity>
+            )}
+            {remoteDisabled && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ color: '#f87171', fontSize: 12, textAlign: 'center' }}>Remote data disabled (permissions).</Text>
+                <TouchableOpacity
+                  style={[styles.inlineReset,{marginTop:8}]}
+                  accessibilityLabel="Retry remote fetch"
+                  onPress={() => { setRemoteDisabled(false); setLastRemoteError(null); }}>
+                  <Text style={styles.inlineResetText}>Retry Remote</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
         {deck.length > 0 && index >= deck.length && (
           <View style={styles.emptyDeck}>            
             <Text style={styles.emptyDeckText}>No more profiles to view.</Text>
-            <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
-              <Text style={styles.inlineResetText}>Start Over</Text>
-            </TouchableOpacity>
+            {demoMode && (
+              <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
+                <Text style={styles.inlineResetText}>Start Over</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
         {deck.length > 0 && index < deck.length && (
-          <ProfileCard profile={deck[index]} />
+          <ProfileCard post={deck[index]} />
         )}
       </View>
       {deck.length > 0 && index < deck.length && (
@@ -296,9 +477,28 @@ export default function ExploreBuilders() {
           <TouchableOpacity accessibilityLabel="Pass on this builder" style={[styles.smallActionButton, styles.passButton]} onPress={handlePass}>
             <Text style={styles.passActionText}>Pass</Text>
           </TouchableOpacity>
-          <TouchableOpacity accessibilityLabel="Connect with this builder" style={[styles.smallActionButton, styles.likeButton]} onPress={() => handleLike(deck[index].id)}>
-            <Text style={styles.likeActionText}>Connect</Text>
+          <TouchableOpacity
+            disabled={demoMode}
+            accessibilityLabel={demoMode ? 'Connect disabled in demo mode' : 'Connect with this builder'}
+            style={[styles.smallActionButton, styles.likeButton, demoMode && { opacity: 0.4 }]}
+            onPress={() => handleLike(deck[index].id)}>
+            <Text style={styles.likeActionText}>{demoMode ? 'Connect (Auth Required)' : 'Connect'}</Text>
           </TouchableOpacity>
+        </View>
+      )}
+      {lastRemoteError && (
+        <View style={{ position:'absolute', top: 8, left: 0, right: 0, alignItems:'center' }}>
+          <Text style={{ color:'#f87171', fontSize:12 }}>Remote error: {lastRemoteError}</Text>
+          {permissionDiagnosis && (
+            <Text style={{ color:'#fda4af', fontSize:11, marginTop:4, paddingHorizontal:12, textAlign:'center' }}>{permissionDiagnosis}</Text>
+          )}
+          {remoteDisabled && (
+            <View style={{ flexDirection:'row', marginTop:6, gap:8 }}>
+              <TouchableOpacity onPress={() => { setRemoteDisabled(false); setLastRemoteError(null); setPermissionDiagnosis(null); }} style={[styles.inlineReset,{paddingVertical:4}]}> 
+                <Text style={styles.inlineResetText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       )}
     </SafeAreaView>
