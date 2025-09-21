@@ -1,11 +1,12 @@
 import { clearCredentials } from '@/constants/credentialStore';
 import { auth, db } from '@/constants/firebase';
 import { POSTS_COLLECTION } from '@/types/post';
+import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, documentId, onSnapshot, /* orderBy */ query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface PostItem { id: string; title: string; description?: string | null; createdAt?: number; }
@@ -33,6 +34,12 @@ export default function ProfileScreen() {
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [showConnectionsModal, setShowConnectionsModal] = useState(false);
+  // Optional location for new post
+  const [attachLocation, setAttachLocation] = useState(false);
+  const [currentCoords, setCurrentCoords] = useState<{ latitude:number; longitude:number } | null>(null);
+  const [locFetching, setLocFetching] = useState(false);
+  const [locError, setLocError] = useState<string | null>(null);
+  const [locationLabel, setLocationLabel] = useState<string | null>(null);
 
   // Subscribe to this user's posts
   useEffect(() => {
@@ -181,14 +188,23 @@ export default function ProfileScreen() {
     }
     try {
       setSubmitting(true);
+      let locationData: { latitude: number; longitude: number } | undefined;
+      if (attachLocation && currentCoords) {
+        locationData = currentCoords;
+      }
       await addDoc(collection(db, POSTS_COLLECTION), {
         title: title.trim(),
         description: description.trim() || null,
         authorId: userId,
         createdAt: serverTimestamp(),
+        ...(locationData ? { location: locationData } : {}),
+        ...(locationLabel ? { locationName: locationLabel } : {})
       });
       setTitle('');
       setDescription('');
+      setAttachLocation(false);
+      setCurrentCoords(null);
+      setLocationLabel(null);
       setShowCreateModal(false);
     } catch (e) {
       console.error('Create post failed', e);
@@ -196,7 +212,42 @@ export default function ProfileScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [title, description, userId]);
+  }, [title, description, userId, attachLocation, currentCoords]);
+
+  const fetchCurrentLocation = useCallback(async () => {
+    try {
+      setLocError(null);
+      setLocFetching(true);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocError('Permission denied');
+        setAttachLocation(false);
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setCurrentCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+      // Reverse geocode for human readable label
+      try {
+        const results = await Location.reverseGeocodeAsync({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+        if (results && results.length > 0) {
+          const r = results[0];
+          const parts = [r.name || r.streetNumber, r.street, r.city, r.region].filter(Boolean);
+          const label = parts.slice(0,3).join(', ') || r.city || r.region || 'Current Location';
+          setLocationLabel(label);
+        } else {
+          setLocationLabel('Current Location');
+        }
+      } catch (geoErr:any) {
+        console.warn('Reverse geocode failed', geoErr);
+        setLocationLabel('Current Location');
+      }
+    } catch (e:any) {
+      setLocError(e.message || 'Failed to get location');
+      setAttachLocation(false);
+    } finally {
+      setLocFetching(false);
+    }
+  }, []);
 
   const handleSignOut = useCallback(async () => {
     Alert.alert('Sign Out','Are you sure you want to sign out?',[
@@ -372,6 +423,36 @@ export default function ProfileScreen() {
                       multiline
                       numberOfLines={4}
                     />
+                    {/* Optional Location Toggle */}
+                    <View style={styles.locationToggleRow}>
+                      <Text style={styles.locationToggleLabel}>Attach Location</Text>
+                      <Switch
+                        value={attachLocation}
+                        onValueChange={(v) => {
+                          setAttachLocation(v);
+                          if (v) {
+                            fetchCurrentLocation();
+                          } else {
+                            setCurrentCoords(null);
+                            setLocError(null);
+                            setLocationLabel(null);
+                          }
+                        }}
+                        thumbColor={attachLocation ? '#34C759' : '#888'}
+                        trackColor={{ false:'#555', true:'#1e572f' }}
+                      />
+                    </View>
+                    {attachLocation && (
+                      <View style={styles.locationBlock}>
+                        {locFetching && <Text style={styles.locationPreview}>Fetching current location…</Text>}
+                        {!locFetching && currentCoords && (
+                          <Text style={styles.locationPreview}>
+                            📍 {locationLabel ? locationLabel : `${currentCoords.latitude.toFixed(6)}, ${currentCoords.longitude.toFixed(6)}`}
+                          </Text>
+                        )}
+                        {locError && <Text style={styles.locationError}>{locError}</Text>}
+                      </View>
+                    )}
                     <TouchableOpacity disabled={submitting} style={[styles.submitButton, submitting && { opacity:0.5 }]} onPress={handleSubmit}>
                       <Text style={styles.submitButtonText}>{submitting ? 'Publishing...' : 'Publish Post'}</Text>
                     </TouchableOpacity>
@@ -543,6 +624,15 @@ const styles = StyleSheet.create({
   ,connectionsTrigger: { backgroundColor:'#1b1f24', paddingHorizontal:14, paddingVertical:12, borderRadius:12, borderWidth:1, borderColor:'#2a3139' }
   ,connectionsTriggerText: { color:'#d1d5db', fontSize:13, fontWeight:'600' }
   ,connectionsModalCard: { backgroundColor:'#1e1e1e', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#333', maxHeight:'75%' }
+  ,locationToggleRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginTop:4, marginBottom:8 }
+  ,locationToggleLabel: { color:'white', fontSize:14, fontWeight:'500' }
+  ,locationBlock: { backgroundColor:'#151515', padding:12, borderRadius:12, borderWidth:1, borderColor:'#262626', marginBottom:12 }
+  ,locationInputsRow: { flexDirection:'row', gap:10, marginBottom:10 }
+  ,halfInput: { flex:1 }
+  ,locateBtn: { backgroundColor:'#2563eb', paddingVertical:10, borderRadius:10, alignItems:'center', marginTop:4 }
+  ,locateBtnText: { color:'white', fontWeight:'600', fontSize:14 }
+  ,locationError: { color:'#f87171', marginTop:8, fontSize:12 }
+  ,locationPreview: { color:'#9ca3af', marginTop:6, fontSize:12 }
 });
 
 // Edit Profile Modal (appended component)

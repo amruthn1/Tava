@@ -1,11 +1,12 @@
 import AIChatbot from "@/components/ai-chatbot";
 import { auth, db } from "@/constants/firebase";
+import { POSTS_COLLECTION } from '@/types/post';
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Mapbox from "@rnmapbox/maps";
 import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, Timestamp, updateDoc } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Dimensions, Keyboard, Pressable, StatusBar, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Dimensions, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 // Reusable Pin component: uses react-native-svg when available, falls back to a styled View
 type PinProps = {
@@ -17,54 +18,35 @@ type PinProps = {
 // Safe wrapper: use Mapbox.CalloutSubview if available, otherwise fall back to TouchableOpacity
 const CalloutWrapper = ((Mapbox as any).CalloutSubview ?? TouchableOpacity) as React.ComponentType<any>;
 
-const Pin = ({ size = 36, color = '#FF3B30', outline = '#fff' }: PinProps) => {
-  const svg = `<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>
-    <path d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z' fill='${color}'/>
-    <path d='M12 11.5A2.5 2.5 0 1112 6a2.5 2.5 0 010 5.5z' fill='${outline}'/>
-  </svg>`;
-  const pinSize = size;
-  const circleSize = Math.round(pinSize * 0.5);
-  const triangleHeight = Math.round(pinSize * 0.44);
+const Pin = ({ size = 40, color = '#FF3B30', outline = '#fff' }: PinProps) => {
+  // Circle diameter & pointer height chosen so total height = size
+  // ensuring the bottom tip of pointer aligns with geographic point.
+  const circleDiameter = size * 0.62; // <= size to leave room for pointer
+  const pointerHeight = size - circleDiameter; // remaining vertical space
+  const pointerWidth = circleDiameter * 0.55;
+  const circleRadius = circleDiameter / 2;
   return (
-    <View
-      style={{
-        width: pinSize,
-        height: pinSize,
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        backgroundColor: 'transparent',
-        transform: [{ translateY: -Math.round(pinSize * 0.4) }],
-      }}
-    >
-      <View
-        style={{
-          width: circleSize,
-            height: circleSize,
-            borderRadius: circleSize / 2,
-            backgroundColor: color,
-            borderWidth: 2,
-            borderColor: outline,
-            marginTop: 0,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.25,
-            shadowRadius: 2,
-            elevation: 3,
-        }}
-      />
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: Math.round(circleSize * 0.45),
-          borderRightWidth: Math.round(circleSize * 0.45),
-          borderBottomWidth: triangleHeight,
-          borderLeftColor: 'transparent',
-          borderRightColor: 'transparent',
-          borderBottomColor: color,
-          marginTop: -6,
-        }}
-      />
+    <View style={{ width: circleDiameter, height: size, alignItems:'center', justifyContent:'flex-start' }}>
+      <View style={{
+        width: circleDiameter,
+        height: circleDiameter,
+        borderRadius: circleRadius,
+        backgroundColor: color,
+        borderWidth: 2,
+        borderColor: outline,
+        shadowColor:'#000', shadowOpacity:0.25, shadowRadius:3, shadowOffset:{ width:0, height:1 }, elevation:3
+      }} />
+      <View style={{
+        width:0,
+        height:0,
+        borderLeftWidth: pointerWidth/2,
+        borderRightWidth: pointerWidth/2,
+        borderTopWidth: pointerHeight,
+        borderLeftColor:'transparent',
+        borderRightColor:'transparent',
+        borderTopColor: color,
+        marginTop:-1
+      }} />
     </View>
   );
 };
@@ -79,7 +61,7 @@ interface Event {
   id: string;
   eventType: string;
   numPeople: string;
-  location: { latitude: number; longitude: number; };
+  location?: { latitude: number; longitude: number; }; // now optional
   locationName?: string;
   description?: string;
   createdAt: Date;
@@ -90,6 +72,20 @@ interface Event {
   isActive?: boolean;
 }
 
+interface PostPin {
+  id: string;
+  title: string;
+  description?: string | null;
+  location?: { latitude: number; longitude: number };
+  createdAt?: Date;
+  authorId: string;
+}
+
+interface UserProfileDoc {
+  id: string;
+  likedPosts?: string[];
+}
+
 const CHAT_MESSAGES_KEY = 'chatMessages_v1';
 
 export default function MapScreen() {
@@ -97,7 +93,12 @@ export default function MapScreen() {
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
+  const [postPins, setPostPins] = useState<PostPin[]>([]);
+  const [userProfiles, setUserProfiles] = useState<UserProfileDoc[]>([]);
+  const [selectedPost, setSelectedPost] = useState<PostPin | null>(null);
   const [initialCameraSet, setInitialCameraSet] = useState(false);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  // Removed custom callout overlay state
   const mapRef = useRef<Mapbox.MapView>(null);
   const cameraRef = useRef<any>(null);
 
@@ -141,6 +142,61 @@ export default function MapScreen() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Subscribe to posts with optional location
+  useEffect(() => {
+    const pq = query(collection(db, POSTS_COLLECTION));
+    const unsub = onSnapshot(pq, snap => {
+      const pins: PostPin[] = snap.docs.map(d => {
+        const data: any = d.data() || {};
+        return {
+          id: d.id,
+          title: data.title,
+            description: data.description,
+            location: data.location,
+            createdAt: data.createdAt?.toDate?.() || (data.createdAt instanceof Timestamp ? data.createdAt.toDate() : undefined),
+            authorId: data.authorId
+        } as PostPin;
+      }).filter(p => p.location && typeof p.location.latitude === 'number' && typeof p.location.longitude === 'number');
+      setPostPins(pins);
+    });
+    return () => unsub();
+  }, []);
+
+  // Subscribe to user profiles (minimal fields)
+  useEffect(() => {
+    const uq = query(collection(db, 'users'));
+    const unsub = onSnapshot(uq, snap => {
+      const profiles: UserProfileDoc[] = snap.docs.map(d => {
+        const data: any = d.data() || {};
+        return { id: d.id, likedPosts: Array.isArray(data.likedPosts) ? data.likedPosts : [] };
+      });
+      setUserProfiles(profiles);
+    });
+    return () => unsub();
+  }, []);
+
+  // Derive connection tiers
+  const meId = auth.currentUser?.uid || null;
+  const currentUserProfile = meId ? userProfiles.find(u => u.id === meId) : undefined;
+  const myLikedPostIds = new Set(currentUserProfile?.likedPosts || []);
+  // Direct authors: authors of posts I've liked
+  const directAuthorIds = new Set<string>();
+  postPins.forEach(p => { if (myLikedPostIds.has(p.id)) directAuthorIds.add(p.authorId); });
+  // Secondary authors: authors liked by direct authors via their likedPosts
+  const secondaryAuthorIds = new Set<string>();
+  if (directAuthorIds.size) {
+    userProfiles.forEach(up => {
+      if (directAuthorIds.has(up.id)) {
+        (up.likedPosts || []).forEach(lpId => {
+          const post = postPins.find(pp => pp.id === lpId);
+          if (post && !directAuthorIds.has(post.authorId) && post.authorId !== meId) {
+            secondaryAuthorIds.add(post.authorId);
+          }
+        });
+      }
+    });
+  }
 
   useEffect(() => {
     (async () => {
@@ -223,53 +279,107 @@ export default function MapScreen() {
 
   const recenterIconSize = Math.max(width * 0.06, 20);
 
+
   return (
     <View style={styles.container}>
       <StatusBar />
-      <Pressable style={styles.container} onPress={() => Keyboard.dismiss()}>
-        <Mapbox.MapView ref={mapRef} style={styles.map} styleURL="mapbox://styles/rohithn1/cmfrlmj1x00g101ry1y3b63h3" scaleBarEnabled={false}>
+      {/* Removed outer Pressable to avoid intercepting annotation taps; keyboard dismiss can be handled elsewhere */}
+      <View style={styles.container}>
+        <Mapbox.MapView
+          ref={mapRef}
+          style={styles.map}
+          styleURL="mapbox://styles/rohithn1/cmfrlmj1x00g101ry1y3b63h3"
+          scaleBarEnabled={false}
+        >
           <Mapbox.Camera ref={cameraRef} pitch={0} />
           <Mapbox.UserLocation visible onUpdate={onUserLocationUpdate} />
           <Mapbox.LocationPuck visible/>
+          {/* Event pins */}
           {events.map((event) => {
             const eventIsActive = isEventActive(event);
             const pinColor = eventIsActive ? '#FF3B30' : '#007AFF';
+            if (!event.location || typeof event.location.latitude !== 'number' || typeof event.location.longitude !== 'number') {
+              return null; // skip events without valid location
+            }
+            const summary = event.description ? (event.description.length > 120 ? event.description.slice(0,117) + '…' : event.description) : null;
             return (
-              <Mapbox.PointAnnotation key={event.id} id={event.id} coordinate={[event.location.longitude, event.location.latitude]} anchor={{ x: 0.5, y: 1 }}>
-                <Pin size={40} color={pinColor} outline="#ffffff" />
-                <Mapbox.Callout title={event.eventType}>
-                  <View style={styles.calloutView}>
-                    <View style={styles.calloutHeader}>
-                      <Text style={styles.calloutTitle}>{event.eventType}</Text>
-                      <View style={[styles.calloutBadge, eventIsActive ? styles.calloutActiveBadge : styles.calloutFutureBadge]}>
-                        <Text style={styles.calloutBadgeText}>{eventIsActive ? 'ACTIVE' : 'FUTURE'}</Text>
-                      </View>
-                    </View>
-                    {!eventIsActive && event.eventDate && (<Text style={styles.calloutTiming}>🕒 {formatEventDate(event.eventDate)}</Text>)}
-                    {event.locationName && (<Text style={styles.calloutText}>📍 {event.locationName}</Text>)}
-                    <Text style={styles.calloutText}>People: {event.numPeople}</Text>
-                    {event.description && (<Text style={styles.calloutText}>{event.description}</Text>)}
-                    <Text style={styles.calloutText}>RSVPs: {event.rsvps?.length || 0}{event.maxAttendees ? `/${event.maxAttendees}` : ''}</Text>
-                    <View style={styles.buttonContainer}>
-                      <CalloutWrapper onPress={() => handleRSVP(event.id)} style={[styles.rsvpButton, event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonActive]}>
-                        <Text style={[styles.rsvpButtonText, event.rsvps?.includes(auth.currentUser?.uid || '') && styles.rsvpButtonTextActive]}>
-                          {event.rsvps?.includes(auth.currentUser?.uid || '') ? '✓ RSVP\'d' : 'RSVP'}
-                        </Text>
-                      </CalloutWrapper>
-                      {auth.currentUser?.uid === event.creatorId && (
-                        <CalloutWrapper onPress={() => handleDelete(event.id)} style={styles.deleteButton}>
-                          <Text style={styles.deleteButtonText}>Delete</Text>
-                        </CalloutWrapper>
-                      )}
-                    </View>
+              <Mapbox.PointAnnotation
+                key={event.id}
+                id={event.id}
+                coordinate={[event.location.longitude, event.location.latitude]}
+                anchor={{ x: 0.5, y: 1 }}
+                onSelected={() => {
+                  console.log('Event pin selected', event.id);
+                  setSelectedAnnotationId(event.id);
+                  if (cameraRef.current) {
+                    cameraRef.current.setCamera({ centerCoordinate: [event.location!.longitude, event.location!.latitude], zoomLevel: 18, animationDuration: 250 });
+                  }
+                }}
+                onDeselected={() => {
+                  if (selectedAnnotationId === event.id) {
+                    setSelectedAnnotationId(null);
+                  }
+                }}
+                selected={selectedAnnotationId === event.id}
+              >
+                <View style={styles.pinHitContainer} pointerEvents="box-none">
+                  {/* Single-tap selection handled by PointAnnotation onSelected; expanded visual wrapper enlarges hit area */}
+                  <View style={styles.pinTouchWrapper} pointerEvents="box-none">
+                    <View style={styles.pinSquareHit} />
+                    <Pin size={44} color={pinColor} outline="#ffffff" />
                   </View>
-                </Mapbox.Callout>
+                </View>
+                {/* Placeholder removed Mapbox.Callout; custom overlay rendered absolutely */}
+              </Mapbox.PointAnnotation>
+            );
+          })}
+          {/* Post pins */}
+          {postPins.map(post => {
+            if (!post.location) return null;
+            const me = auth.currentUser?.uid;
+            if (me && post.authorId === me) return null; // hide current user's own posts
+            // Determine pin color by connection tier
+            let pinColor = '#555555'; // default/secondary
+            if (directAuthorIds.has(post.authorId)) {
+              pinColor = '#8E44AD'; // direct = purple
+            } else if (secondaryAuthorIds.has(post.authorId)) {
+              pinColor = '#555555'; // secondary = gray (same as default for now)
+            }
+            const summary = post.description ? (post.description.length > 120 ? post.description.slice(0,117) + '…' : post.description) : null;
+            return (
+              <Mapbox.PointAnnotation
+                key={post.id}
+                id={`post-${post.id}`}
+                coordinate={[post.location.longitude, post.location.latitude]}
+                anchor={{ x:0.5, y:1 }}
+                onSelected={() => {
+                  console.log('Post pin selected', post.id);
+                  setSelectedAnnotationId(`post-${post.id}`);
+                  setSelectedPost(post); // open detail immediately
+                  if (cameraRef.current) {
+                    cameraRef.current.setCamera({ centerCoordinate: [post.location!.longitude, post.location!.latitude], zoomLevel: 18, animationDuration: 250 });
+                  }
+                }}
+                onDeselected={() => {
+                  if (selectedAnnotationId === `post-${post.id}`) {
+                    setSelectedAnnotationId(null);
+                  }
+                }}
+                selected={selectedAnnotationId === `post-${post.id}`}
+              >
+                <View style={styles.pinHitContainer} pointerEvents="box-none">
+                  <View style={styles.pinTouchWrapper} pointerEvents="box-none">
+                    <View style={styles.pinSquareHit} />
+                    <Pin size={42} color={'#8E44AD'} outline="#ffffff" />
+                  </View>
+                </View>
+                {/* Placeholder removed Mapbox.Callout */}
               </Mapbox.PointAnnotation>
             );
           })}
         </Mapbox.MapView>
-      </Pressable>
-      <View style={styles.buttonStack}>
+      </View>
+      <View style={styles.buttonStack} pointerEvents={isChatOpen ? 'none' : 'auto'}>
         <TouchableOpacity style={[styles.chatButton, styles.stackedButton]} onPress={() => setIsChatOpen(true)} activeOpacity={0.8}>
           <Ionicons name="chatbubbles" size={20} color="white" />
         </TouchableOpacity>
@@ -278,7 +388,7 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
       {isChatOpen && (
-        <View style={styles.chatModalOverlay}>
+        <View style={styles.chatModalOverlay} pointerEvents="auto">
           <Pressable style={styles.backdrop} onPress={() => setIsChatOpen(false)} />
           <View style={styles.chatModal}>
             <View style={styles.chatModalInner}>
@@ -287,6 +397,25 @@ export default function MapScreen() {
           </View>
         </View>
       )}
+      {/* Post Detail Modal */}
+      <Modal visible={!!selectedPost} transparent animationType="fade" onRequestClose={() => setSelectedPost(null)}>
+        <Pressable style={styles.detailOverlay} onPress={() => setSelectedPost(null)}>
+          <Pressable style={styles.detailCard} onPress={(e) => { /* swallow */ }}>
+            <ScrollView style={{ maxHeight: height * 0.6 }} contentContainerStyle={{ paddingBottom: 12 }}>
+              <Text style={styles.detailTitle}>{selectedPost?.title}</Text>
+              {selectedPost?.createdAt && (
+                <Text style={styles.detailMeta}>{selectedPost.createdAt.toLocaleString()}</Text>
+              )}
+              {selectedPost?.description && (
+                <Text style={styles.detailBody}>{selectedPost.description}</Text>
+              )}
+              <TouchableOpacity style={styles.closeDetailBtn} onPress={() => setSelectedPost(null)}>
+                <Text style={styles.closeDetailText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -294,6 +423,12 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, position: 'relative', zIndex: 1 },
   map: { flex: 1 },
+  pinHitContainer: { justifyContent:'center', alignItems:'center', padding:0, margin:0 },
+  // Wrapper gives generous padding; square hit provides large transparent target anchored so bottom tip still maps to coordinate
+  pinTouchWrapper: { alignItems:'center', justifyContent:'flex-end', padding:0 },
+  pinSquareHit: { position:'absolute', width:80, height:80, bottom:0, left:'50%', marginLeft:-40, // center horizontally
+    // Expand touch area without visual artifact
+    backgroundColor:'transparent' },
   buttonStack: { position: 'absolute', left: 20, bottom: 30, alignItems: 'center', zIndex: 1000 },
   stackedButton: { marginBottom: 10, width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84 },
   chatButton: { backgroundColor: '#007AFF' },
@@ -307,15 +442,16 @@ const styles = StyleSheet.create({
   recenterButton: { backgroundColor: "#222" },
   recenterIcon: { fontSize: Math.max(width * 0.055, 18), textAlign: "center", alignContent: "center", textAlignVertical: "center", color: "#007AFF" },
   chatbotPosition: { bottom: 100, left: 20 },
-  calloutView: { padding: Math.max(width * 0.02, 8), backgroundColor: 'white', borderRadius: Math.max(width * 0.02, 6), minWidth: Math.min(width * 0.4, 160), alignItems: 'center' },
+  calloutView: { padding: Math.max(width * 0.02, 8), backgroundColor: 'white', borderRadius: Math.max(width * 0.02, 6), minWidth: Math.min(width * 0.4, 160), alignItems: 'center', zIndex: 10000, elevation: 10000, shadowColor:'#000', shadowOpacity:0.35, shadowRadius:6, shadowOffset:{ width:0, height:3 } },
+  // customCallout removed
   calloutText: { color: 'black', marginBottom: Math.max(width * 0.01, 4) },
-  deleteButton: { backgroundColor: '#ff3b30', paddingVertical: Math.max(height * 0.008, 6), paddingHorizontal: Math.max(width * 0.03, 8), borderRadius: Math.max(width * 0.02, 6), marginTop: Math.max(width * 0.02, 6) },
-  deleteButtonText: { color: 'white', fontWeight: 'bold' },
-  buttonContainer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: Math.max(width * 0.02, 6), gap: Math.max(width * 0.02, 6) },
-  rsvpButton: { backgroundColor: '#007AFF', paddingVertical: Math.max(height * 0.008, 6), paddingHorizontal: Math.max(width * 0.03, 8), borderRadius: Math.max(width * 0.02, 6), flex: 1 },
+  buttonContainer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, gap: 10 },
+  rsvpButton: { flex:1, backgroundColor: '#007AFF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems:'center' },
   rsvpButtonActive: { backgroundColor: '#34C759' },
-  rsvpButtonText: { color: 'white', fontWeight: 'bold', textAlign: 'center' },
+  rsvpButtonText: { color: 'white', fontWeight: 'bold', fontSize:14 },
   rsvpButtonTextActive: { color: 'white' },
+  deleteButton: { backgroundColor: '#ff3b30', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems:'center' },
+  deleteButtonText: { color: 'white', fontWeight: 'bold', fontSize:14 },
   calloutHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Math.max(width * 0.01, 4) },
   calloutTitle: { color: 'black', fontWeight: 'bold', fontSize: 16, flex: 1 },
   calloutBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginLeft: 8 },
@@ -323,4 +459,14 @@ const styles = StyleSheet.create({
   calloutFutureBadge: { backgroundColor: '#007AFF' },
   calloutBadgeText: { color: 'white', fontSize: 10, fontWeight: 'bold' },
   calloutTiming: { color: '#007AFF', fontSize: 12, marginBottom: Math.max(width * 0.01, 4), fontWeight: '600' },
+  detailButton: { marginTop: 4, backgroundColor:'#8E44AD', paddingHorizontal:10, paddingVertical:6, borderRadius:8 },
+  detailButtonText: { color:'white', fontSize:12, fontWeight:'600' },
+  detailOverlay: { flex:1, backgroundColor:'rgba(0,0,0,0.55)', justifyContent:'center', alignItems:'center', padding:20 },
+  detailCard: { backgroundColor:'#1e1e1e', width:'100%', borderRadius:20, padding:20, borderWidth:1, borderColor:'#333' },
+  detailTitle: { color:'white', fontSize:18, fontWeight:'700', marginBottom:6 },
+  detailMeta: { color:'#888', fontSize:12, marginBottom:10 },
+  detailBody: { color:'#ddd', fontSize:14, lineHeight:20, marginBottom:12 },
+  // Close button now matches Explore "Connect" pill styling (rowActionPill + connectPill + likeActionText)
+  closeDetailBtn: { backgroundColor:'#142a20', borderWidth:1, borderColor:'#1f4736', paddingVertical:14, borderRadius:40, alignItems:'center', marginTop:24, alignSelf:'stretch' },
+  closeDetailText: { color:'#34d399', fontWeight:'600', fontSize:15 }
 });
