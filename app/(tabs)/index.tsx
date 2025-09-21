@@ -1,13 +1,11 @@
 import AIChatbot from "@/components/ai-chatbot";
-import { db } from "@/constants/firebase";
+import { auth, db } from "@/constants/firebase";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Mapbox from "@rnmapbox/maps";
-import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, updateDoc, Timestamp } from "firebase/firestore";
-import { auth } from "@/constants/firebase";
+import { arrayRemove, arrayUnion, collection, deleteDoc, doc, onSnapshot, query, Timestamp, updateDoc } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View, Keyboard, StatusBar } from "react-native";
-import CreateEventPopup from '@/components/CreateEventPopup';
+import { Alert, Dimensions, Keyboard, Pressable, StatusBar, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 // Reusable Pin component: uses react-native-svg when available, falls back to a styled View
 type PinProps = {
@@ -324,10 +322,6 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       <StatusBar />
-      <CreateEventPopup 
-        visible={isCreateEventVisible} 
-        onClose={() => setIsCreateEventVisible(false)} 
-      />
       <Pressable style={styles.container} onPress={() => Keyboard.dismiss()}>
         <Mapbox.MapView
           ref={mapRef}
@@ -416,13 +410,6 @@ export default function HomeScreen() {
       </Pressable>
       {/* Stacked Buttons Container */}
       <View style={styles.buttonStack}>
-        {/* Create Event Button */}
-        <TouchableOpacity 
-          style={[styles.createEventButton, styles.stackedButton]}
-          onPress={() => setIsCreateEventVisible(true)}
-        >
-          <Ionicons name="add" size={24} color="white" />
-        </TouchableOpacity>
         
         {/* AI Chat Button */}
         <TouchableOpacity 
