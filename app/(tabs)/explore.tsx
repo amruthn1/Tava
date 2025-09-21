@@ -8,7 +8,7 @@ import { auth, autoSignInIfNeeded, db, ensureAtLeastAnonymousAuth } from '@/cons
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { arrayUnion, collection, doc, getDoc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Dimensions, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Linking, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // ----------------------------------------------------------------------------------
 // Builder / Idea Card Swipe MVP (replaces old events explore)
@@ -17,6 +17,7 @@ import { Dimensions, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } fr
 interface BuilderProfile {
   id: string; // userId
   displayName?: string;
+  email?: string;
   ideaTitle?: string;
   ideaDescription?: string;
   liked?: string[]; // people this user liked
@@ -116,6 +117,7 @@ export default function ExploreBuilders() {
         if (!snap.exists()) {
           await setDoc(ref, {
             displayName: firebaseUser.isAnonymous ? 'Anon' : (firebaseUser.email || 'User'),
+            email: firebaseUser.email || null,
             ideaTitle: null,
             ideaDescription: null,
             liked: [],
@@ -124,6 +126,12 @@ export default function ExploreBuilders() {
             createdAt: Date.now()
           });
           console.log('[Explore] Created new user profile for', firebaseUser.uid);
+        } else {
+          // Backfill email if missing
+          const data: any = snap.data() || {};
+          if (!data.email && firebaseUser.email) {
+            try { await updateDoc(ref, { email: firebaseUser.email }); } catch {}
+          }
         }
       } catch (e) {
         console.warn('[Explore] Failed to ensure user profile', e);
@@ -152,6 +160,7 @@ export default function ExploreBuilders() {
           return {
             id: docSnap.id,
             displayName: data.displayName,
+            email: typeof data.email === 'string' ? data.email : undefined,
             ideaTitle: data.ideaTitle,
             ideaDescription: data.ideaDescription,
             liked: Array.isArray(data.liked) ? data.liked : [],
@@ -291,17 +300,17 @@ export default function ExploreBuilders() {
     setIndex(prev => prev + 1);
   }, []);
 
-  const handleLike = useCallback(async (postId: string) => {
+  const handleLike = useCallback(async (postId: string, authorId: string) => {
     if (demoMode) {
-      setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])) } : p));
+      setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])), liked: Array.from(new Set([...(p.liked||[]), authorId])) } : p));
       advance();
       return;
     }
-    setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])) } : p));
+    setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])), liked: Array.from(new Set([...(p.liked||[]), authorId])) } : p));
     advance();
     // Firestore write (will be no-op until auth fallback replaced with real user id)
     try {
-      await updateDoc(doc(db, 'users', currentUserId), { likedPosts: arrayUnion(postId) });
+      await updateDoc(doc(db, 'users', currentUserId), { likedPosts: arrayUnion(postId), liked: arrayUnion(authorId) });
     } catch (e) {
       console.warn('Failed to persist like; will resync on next snapshot', e);
       // (Optional) Could implement rollback or refresh logic here.
@@ -350,6 +359,31 @@ export default function ExploreBuilders() {
   }, [currentUserProfile, allProfiles, posts]);
 
   // Radial layout helpers (adaptive multi-ring)
+  const isDirect = useCallback((other: BuilderProfile | undefined) => {
+    if (!other || !currentUserProfile) return false;
+    const myLiked = new Set(currentUserProfile.liked || []);
+    const theirLiked = new Set(other.liked || []);
+    return myLiked.has(other.id) && theirLiked.has(currentUserId);
+  }, [currentUserProfile, currentUserId]);
+
+  const handleNodePress = useCallback((p: BuilderProfile) => {
+    const direct = isDirect(p);
+    if (direct && p.email) {
+      Alert.alert(
+        'Contact',
+        `${p.displayName || 'User'}\n${p.email}`,
+        [
+          { text: 'Close', style: 'cancel' },
+          { text: 'Email', onPress: () => { try { Linking.openURL(`mailto:${encodeURIComponent(p.email!)}`); } catch { /* noop */ } } }
+        ]
+      );
+    } else if (direct) {
+      Alert.alert('Contact', 'This connection has no email on file.');
+    } else {
+      Alert.alert('Not connected', 'Email is visible after you both connect.');
+    }
+  }, [isDirect]);
+
   const renderGraph = () => {
     if (!currentUserProfile) return null;
     const first = graphData.first;
@@ -453,9 +487,14 @@ export default function ExploreBuilders() {
           </View>
           {/* First ring */}
           {first.map((p,i) => (
-            <View key={p.id} style={[styles.node, styles.nodeFirst, { left: firstPos[i].x - 18, top: firstPos[i].y - 18 }]}>              
+            <TouchableOpacity
+              key={p.id}
+              style={[styles.node, styles.nodeFirst, isDirect(p) && styles.nodeFirstDirect, { left: firstPos[i].x - 18, top: firstPos[i].y - 18 }]}
+              onPress={() => handleNodePress(p)}
+              accessibilityLabel={`View ${p.displayName || 'builder'} contact`}
+            >              
               <Text style={styles.nodeLabel}>{p.displayName?.[0] || '?'}</Text>
-            </View>
+            </TouchableOpacity>
           ))}
           {/* Second ring */}
           {secondRingNodes.map((p,i) => (
@@ -536,7 +575,7 @@ export default function ExploreBuilders() {
                   disabled={demoMode}
                   accessibilityLabel={demoMode ? 'Connect disabled in demo mode' : 'Connect with this builder'}
                   style={[styles.rowActionPill, styles.connectPill, demoMode && { opacity: 0.4 }]}
-                  onPress={() => handleLike(deck[index].id)}>
+                  onPress={() => handleLike(deck[index].id, deck[index].authorId)}>
                   <Text style={styles.likeActionText}>{demoMode ? 'Connect (Auth Required)' : 'Connect'}</Text>
                 </TouchableOpacity>
               </View>
@@ -630,6 +669,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#059669',
     borderWidth: 2,
     borderColor: '#10b981'
+  },
+  nodeFirstDirect: {
+    borderColor: '#fbbf24',
+    borderWidth: 3,
   },
   nodeSecond: {
     width: 28,
