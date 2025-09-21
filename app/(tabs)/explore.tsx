@@ -7,8 +7,8 @@
 import { auth, autoSignInIfNeeded, db, ensureAtLeastAnonymousAuth } from '@/constants/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { arrayUnion, collection, doc, getDoc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Dimensions, Linking, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Dimensions, PanResponder, PanResponderInstance, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // ----------------------------------------------------------------------------------
 // Builder / Idea Card Swipe MVP (replaces old events explore)
@@ -17,7 +17,6 @@ import { Alert, Dimensions, Linking, SafeAreaView, StyleSheet, Text, TouchableOp
 interface BuilderProfile {
   id: string; // userId
   displayName?: string;
-  email?: string;
   ideaTitle?: string;
   ideaDescription?: string;
   liked?: string[]; // people this user liked
@@ -90,6 +89,120 @@ export default function ExploreBuilders() {
   const currentUserId = firebaseUser ? firebaseUser.uid : LOCAL_USER_ID;
   // Deck now directly uses profiles instead of posts
   const [initialized, setInitialized] = useState(false);
+  // Graph now always in expanded mode; collapse logic removed
+  // Graph interaction: selected node id ("ME" denotes current user) for highlight context
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  // Draggable node positions: map node id -> Animated.ValueXY
+  const nodePositions = useRef<Record<string, Animated.ValueXY>>({}).current;
+  const panResponders = useRef<Record<string, PanResponderInstance>>({}).current;
+  // Pinned (persisted) absolute positions after user drags & releases.
+  const [pinned, setPinned] = useState<Record<string,{x:number;y:number}>>({});
+  // Home (original layout) positions cached each render pass for reset logic.
+  const homePositions = useRef<Record<string,{x:number;y:number}>>({}).current;
+
+  const ensureAnimated = (id: string, base: {x:number;y:number}) => {
+    if (!nodePositions[id]) {
+      nodePositions[id] = new Animated.ValueXY({ x: base.x, y: base.y });
+    }
+    return nodePositions[id];
+  };
+
+  // springBack retained (currently unused after persistent positioning) for potential future reset feature
+  const springBack = (id: string, to: {x:number;y:number}) => {
+    const pos = nodePositions[id];
+    if (!pos) return;
+    Animated.spring(pos, { toValue: { x: to.x, y: to.y }, useNativeDriver: false, friction: 6, tension: 60 }).start();
+  };
+
+  const ensurePan = (id: string, getHome: () => {x:number;y:number}) => {
+    if (panResponders[id]) return panResponders[id];
+    const responder = PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        // bring to front by selecting (optional visual)
+        setSelectedNode(prev => prev === id ? prev : id);
+        // If not yet pinned and currently at home, establish baseline pinned so drag offset is relative
+        if (!pinned[id]) {
+          const base = getHome();
+          setPinned(prev => ({ ...prev, [id]: base }));
+        }
+      },
+      onPanResponderMove: (_, gesture) => {
+        const base = getHome(); // base already accounts for pinned location
+        const pos = ensureAnimated(id, base);
+        // offset from home position
+        pos.setValue({ x: base.x + gesture.dx, y: base.y + gesture.dy });
+        // trigger light re-render for edges (throttled via animation frame)
+        requestAnimationFrame(() => setEdgeVersion(v => v + 1));
+      },
+      onPanResponderRelease: (_, gesture) => {
+        const base = getHome();
+        const pos = ensureAnimated(id, base);
+        // Final position includes drag delta + small inertial nudge
+        const nudgeScale = 0.12;
+        const dragX = base.x + gesture.dx;
+        const dragY = base.y + gesture.dy;
+        const target = {
+          x: dragX + Math.max(-40, Math.min(40, gesture.vx * 100 * nudgeScale)),
+          y: dragY + Math.max(-40, Math.min(40, gesture.vy * 100 * nudgeScale))
+        };
+        Animated.timing(pos, { toValue: target, duration: 140, useNativeDriver: false }).start(() => {
+          // Persist (pin) the node at new absolute coordinates
+            setPinned(prev => ({ ...prev, [id]: target }));
+            setEdgeVersion(v => v + 1);
+        });
+      },
+      onPanResponderTerminate: () => {
+        // If gesture cancelled, pin wherever it currently is.
+        const av: any = nodePositions[id];
+        if (av && av.x && typeof av.x._value === 'number') {
+          const cur = { x: av.x._value, y: av.y._value };
+          setPinned(prev => ({ ...prev, [id]: cur }));
+          setEdgeVersion(v => v + 1);
+        }
+      }
+    });
+    panResponders[id] = responder;
+    return responder;
+  };
+  // Edge version used to force re-render when positions mutate outside React state
+  const [edgeVersion, setEdgeVersion] = useState(0);
+
+  // When selection cleared, animate all non-selected pinned nodes back to their home layout.
+  useEffect(() => {
+    if (selectedNode !== null) return; // only when fully deselecting
+    // For each pinned node, animate back to its original home and remove pin afterward
+    Object.keys(pinned).forEach(id => {
+      const home = homePositions[id];
+      if (!home) return;
+      const av = ensureAnimated(id, pinned[id]);
+      Animated.timing(av, { toValue: home, duration: 180, useNativeDriver: false }).start(() => {
+        setPinned(prev => {
+          const cp = { ...prev };
+          delete cp[id];
+          return cp;
+        });
+        setEdgeVersion(v => v + 1);
+      });
+    });
+  }, [selectedNode]);
+
+  // Explicit reset invoked on any outside click (graph canvas background or deck area) regardless of selection state
+  const resetAllNodes = () => {
+    // Deselect
+    setSelectedNode(null);
+    // Animate/push any currently displaced nodes back
+    Object.keys(pinned).forEach(id => {
+      const home = homePositions[id];
+      if (!home) return;
+      const av = ensureAnimated(id, pinned[id]);
+      Animated.timing(av, { toValue: home, duration: 160, useNativeDriver: false }).start(() => {
+        setPinned(prev => {
+          const cp = { ...prev }; delete cp[id]; return cp; });
+        setEdgeVersion(v => v + 1);
+      });
+    });
+  };
 
   // Auth state listener & optional auto sign-in (dev convenience)
   useEffect(() => {
@@ -117,7 +230,6 @@ export default function ExploreBuilders() {
         if (!snap.exists()) {
           await setDoc(ref, {
             displayName: firebaseUser.isAnonymous ? 'Anon' : (firebaseUser.email || 'User'),
-            email: firebaseUser.email || null,
             ideaTitle: null,
             ideaDescription: null,
             liked: [],
@@ -126,12 +238,6 @@ export default function ExploreBuilders() {
             createdAt: Date.now()
           });
           console.log('[Explore] Created new user profile for', firebaseUser.uid);
-        } else {
-          // Backfill email if missing
-          const data: any = snap.data() || {};
-          if (!data.email && firebaseUser.email) {
-            try { await updateDoc(ref, { email: firebaseUser.email }); } catch {}
-          }
         }
       } catch (e) {
         console.warn('[Explore] Failed to ensure user profile', e);
@@ -160,7 +266,6 @@ export default function ExploreBuilders() {
           return {
             id: docSnap.id,
             displayName: data.displayName,
-            email: typeof data.email === 'string' ? data.email : undefined,
             ideaTitle: data.ideaTitle,
             ideaDescription: data.ideaDescription,
             liked: Array.isArray(data.liked) ? data.liked : [],
@@ -300,17 +405,17 @@ export default function ExploreBuilders() {
     setIndex(prev => prev + 1);
   }, []);
 
-  const handleLike = useCallback(async (postId: string, authorId: string) => {
+  const handleLike = useCallback(async (postId: string) => {
     if (demoMode) {
-      setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])), liked: Array.from(new Set([...(p.liked||[]), authorId])) } : p));
+      setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])) } : p));
       advance();
       return;
     }
-    setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])), liked: Array.from(new Set([...(p.liked||[]), authorId])) } : p));
+    setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])) } : p));
     advance();
     // Firestore write (will be no-op until auth fallback replaced with real user id)
     try {
-      await updateDoc(doc(db, 'users', currentUserId), { likedPosts: arrayUnion(postId), liked: arrayUnion(authorId) });
+      await updateDoc(doc(db, 'users', currentUserId), { likedPosts: arrayUnion(postId) });
     } catch (e) {
       console.warn('Failed to persist like; will resync on next snapshot', e);
       // (Optional) Could implement rollback or refresh logic here.
@@ -359,41 +464,16 @@ export default function ExploreBuilders() {
   }, [currentUserProfile, allProfiles, posts]);
 
   // Radial layout helpers (adaptive multi-ring)
-  const isDirect = useCallback((other: BuilderProfile | undefined) => {
-    if (!other || !currentUserProfile) return false;
-    const myLiked = new Set(currentUserProfile.liked || []);
-    const theirLiked = new Set(other.liked || []);
-    return myLiked.has(other.id) && theirLiked.has(currentUserId);
-  }, [currentUserProfile, currentUserId]);
-
-  const handleNodePress = useCallback((p: BuilderProfile) => {
-    const direct = isDirect(p);
-    if (direct && p.email) {
-      Alert.alert(
-        'Contact',
-        `${p.displayName || 'User'}\n${p.email}`,
-        [
-          { text: 'Close', style: 'cancel' },
-          { text: 'Email', onPress: () => { try { Linking.openURL(`mailto:${encodeURIComponent(p.email!)}`); } catch { /* noop */ } } }
-        ]
-      );
-    } else if (direct) {
-      Alert.alert('Contact', 'This connection has no email on file.');
-    } else {
-      Alert.alert('Not connected', 'Email is visible after you both connect.');
-    }
-  }, [isDirect]);
-
   const renderGraph = () => {
     if (!currentUserProfile) return null;
     const first = graphData.first;
     const second = graphData.second;
 
     // Parameters
-    const MIN_ARC_GAP = 14; // px minimal spacing between node centers along a ring
-    const RING_PADDING = 38; // distance between rings
-    const BASE_RADIUS = 46; // radius for first ring if few nodes
-    const MAX_SIZE = 300; // cap canvas size for performance
+  const MIN_ARC_GAP = 18;
+  const RING_PADDING = 80; // previously conditional
+  const BASE_RADIUS = 90;  // previously conditional
+  const MAX_SIZE = 520;    // always expanded size
 
     // Compute required radius for a given node count so arc length >= MIN_ARC_GAP
     const radiusFor = (count: number, base: number) => {
@@ -423,7 +503,7 @@ export default function ExploreBuilders() {
 
     // Final canvas size (diameter of largest ring + node diameter margin)
     const largestR = thirdRingNodes.length ? r3 : (secondRingNodes.length ? r2 : r1);
-    const nodeDiameter = 40; // approx max
+  const nodeDiameter = 28; // expanded size
     const size = Math.min(MAX_SIZE, Math.ceil(largestR * 2 + nodeDiameter + 12));
     const center = size / 2;
 
@@ -434,38 +514,95 @@ export default function ExploreBuilders() {
         return { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) };
       });
     };
-    const firstPos = place(first.length, r1);
-    const secondPos = place(secondRingNodes.length, r2, -Math.PI / 2 + Math.PI / (secondRingNodes.length || 1)); // slight phase shift
-    const thirdPos = place(thirdRingNodes.length, r3, -Math.PI / 2 + Math.PI / (thirdRingNodes.length || 1));
+    // Asymmetric weighting: angle slots allocated proportional to descendant counts to reduce symmetry.
+    const weightCounts = (nodes: BuilderProfile[]) => nodes.map(n => {
+      const children = second.filter(s => (n.likedPosts||[]).includes(s.id)).length;
+      return 1 + children; // base weight 1 + child count
+    });
+    const distribute = (nodes: BuilderProfile[], radius: number, phaseShift = 0) => {
+      if (nodes.length === 0) return [] as {x:number;y:number}[];
+      const weights = weightCounts(nodes);
+      const total = weights.reduce((a,b)=>a+b,0);
+      let angleCursor = -Math.PI/2 + phaseShift; // start top
+      return nodes.map((n,i) => {
+        const span = (2*Math.PI)*(weights[i]/total);
+        const angle = angleCursor + span/2; // center of span
+        angleCursor += span;
+        return { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) };
+      });
+    };
+  const firstPos = distribute(first, r1, 0);
+  const secondPos = distribute(secondRingNodes, r2, Math.PI/(secondRingNodes.length||1));
+  const thirdPos = distribute(thirdRingNodes, r3, Math.PI/(thirdRingNodes.length||1));
+
+    // Helper to push an edge with depth-based base opacity & selection highlighting.
+    // depth: 0 center->first, 1 first->second, 2 outward
+    const pushEdge = (
+      acc: React.ReactElement[], key: string,
+      ax: number, ay: number, bx: number, by: number,
+      depth: number, aId: string, bId: string
+    ) => {
+      const dx = bx - ax; const dy = by - ay; const dist = Math.hypot(dx, dy); if (dist === 0) return;
+      const angle = Math.atan2(dy, dx);
+      const baseOpacity = depth === 0 ? 0.55 : depth === 1 ? 0.38 : 0.22; // subtler baseline (GitHub network vibe)
+      const isHighlighted = !!selectedNode && (selectedNode === aId || selectedNode === bId);
+      const dimFactor = selectedNode ? (isHighlighted ? 1 : 0.12) : 1;
+      const opacity = baseOpacity * dimFactor + (isHighlighted ? 0.25 : 0); // bump highlighted edge visibility
+      const color = isHighlighted ? '#ffffff' : '#30363d';
+      acc.push(
+        <View
+          key={key}
+          style={[styles.edgeLineBase, { backgroundColor: color, opacity, left: (ax+bx)/2 - dist/2, top: (ay+by)/2 - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]}
+        />
+      );
+    };
+
+    const currentPosFor = (id: string, fallback: {x:number;y:number}) => {
+      const av: any = nodePositions[id];
+      if (!av) return fallback;
+      // Try standard Animated.ValueXY internal shape
+      if (av.x && typeof av.x._value === 'number' && av.y && typeof av.y._value === 'number') {
+        return { x: av.x._value, y: av.y._value };
+      }
+      // Fallback attempt if stored differently
+      if (typeof av._value === 'object' && typeof av._value.x === 'number' && typeof av._value.y === 'number') {
+        return { x: av._value.x, y: av._value.y };
+      }
+      return fallback;
+    };
 
     const renderEdges = () => {
       const edges: React.ReactElement[] = [];
-      // Center -> first
-      first.forEach((p, i) => {
-        const dx = firstPos[i].x - center; const dy = firstPos[i].y - center; const dist = Math.hypot(dx, dy);
-        const angle = Math.atan2(dy, dx); const midX = (firstPos[i].x + center) / 2; const midY = (firstPos[i].y + center) / 2;
-        edges.push(<View key={'edge-f-' + p.id} style={[styles.edgeLineStrong,{ left: midX - dist/2, top: midY - 1, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
+      // Center -> first (depth 0)
+      const mePos = currentPosFor('ME', { x: center - 16, y: center - 16 });
+      const meCenter = { x: mePos.x + 16, y: mePos.y + 16 };
+      first.forEach((p,i) => {
+        const fPos = currentPosFor(p.id, { x: firstPos[i].x - 13, y: firstPos[i].y - 13 });
+        const fCenter = { x: fPos.x + 13, y: fPos.y + 13 };
+        pushEdge(edges, 'edge-f-'+p.id, meCenter.x, meCenter.y, fCenter.x, fCenter.y, 0, 'ME', p.id);
       });
-      // first -> second
+      // first -> second (depth 1)
       secondRingNodes.forEach((p, si) => {
         const parents = first.filter(f => (f.liked || []).includes(p.id));
         parents.forEach(parent => {
           const pi = first.indexOf(parent); if (pi === -1) return;
-          const dx = secondPos[si].x - firstPos[pi].x; const dy = secondPos[si].y - firstPos[pi].y; const dist = Math.hypot(dx, dy);
-          const angle = Math.atan2(dy, dx); const midX = (secondPos[si].x + firstPos[pi].x)/2; const midY = (secondPos[si].y + firstPos[pi].y)/2;
-          edges.push(<View key={'edge-s2-' + p.id + '-' + parent.id} style={[styles.edgeLine,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
+          const aPos = currentPosFor(parent.id, { x: firstPos[pi].x - 13, y: firstPos[pi].y - 13 });
+          const bPos = currentPosFor(p.id, { x: secondPos[si].x - 11, y: secondPos[si].y - 11 });
+          pushEdge(edges, 'edge-s2-'+p.id+'-'+parent.id, aPos.x + 13, aPos.y + 13, bPos.x + 11, bPos.y + 11, 1, parent.id, p.id);
         });
       });
-      // second -> third (treat secondRingNodes as parents for overflow lineage if liked[] matches)
+      // second/first -> third (depth 2)
       thirdRingNodes.forEach((p, ti) => {
         const parents = [...first, ...secondRingNodes].filter(f => (f.liked || []).includes(p.id));
         parents.forEach(parent => {
           const piFirst = first.indexOf(parent);
           const sourcePos = piFirst !== -1 ? firstPos[piFirst] : secondPos[secondRingNodes.indexOf(parent)];
           if (!sourcePos) return;
-          const dx = thirdPos[ti].x - sourcePos.x; const dy = thirdPos[ti].y - sourcePos.y; const dist = Math.hypot(dx, dy);
-          const angle = Math.atan2(dy, dx); const midX = (thirdPos[ti].x + sourcePos.x)/2; const midY = (thirdPos[ti].y + sourcePos.y)/2;
-          edges.push(<View key={'edge-s3-' + p.id + '-' + parent.id} style={[styles.edgeLine,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
+          const aId = parent.id;
+          const aPos = currentPosFor(aId, piFirst !== -1 ? { x: sourcePos.x - 13, y: sourcePos.y - 13 } : { x: sourcePos.x - 11, y: sourcePos.y - 11 });
+          const bPos = currentPosFor(p.id, { x: thirdPos[ti].x - 11, y: thirdPos[ti].y - 11 });
+          const aRadiusOffset = piFirst !== -1 ? 13 : 11;
+          pushEdge(edges, 'edge-s3-'+p.id+'-'+parent.id, aPos.x + aRadiusOffset, aPos.y + aRadiusOffset, bPos.x + 11, bPos.y + 11, 2, parent.id, p.id);
         });
       });
       return edges;
@@ -474,42 +611,81 @@ export default function ExploreBuilders() {
     const ringConnectors = (positions: {x:number;y:number}[], style: any, prefix: string) => positions.length > 1 ? positions.map((pos,i) => {
       const next = positions[(i+1)%positions.length]; const dx = next.x - pos.x; const dy = next.y - pos.y; const dist = Math.hypot(dx,dy); const angle = Math.atan2(dy,dx); const midX = (pos.x + next.x)/2; const midY = (pos.y + next.y)/2; return <View key={prefix + i} style={[style,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />; }) : null;
 
+    // Cache home positions for reset logic (raw layout centers minus radius offsets used for left/top positioning)
+    homePositions['ME'] = { x: center - 16, y: center - 16 };
+    first.forEach((p,i) => { homePositions[p.id] = { x: firstPos[i].x - 13, y: firstPos[i].y - 13 }; });
+    secondRingNodes.forEach((p,i) => { homePositions[p.id] = { x: secondPos[i].x - 11, y: secondPos[i].y - 11 }; });
+    thirdRingNodes.forEach((p,i) => { homePositions[p.id] = { x: thirdPos[i].x - 11, y: thirdPos[i].y - 11 }; });
+
     return (
       <View style={styles.graphWrapper}>
-        <View style={[styles.graphCanvas,{ width: size, height: size }]}>          
+  <Pressable style={[styles.graphCanvas,{ width: size, height: size }]} onPress={resetAllNodes}>
           {renderEdges()}
-          {ringConnectors(firstPos, styles.ringLine, 'rf-')}
-          {ringConnectors(secondPos, styles.ringLineOuter, 'rs-')}
-          {thirdRingNodes.length > 1 && ringConnectors(thirdPos, styles.ringLineOuter, 'rt-')}
           {/* Center node */}
-          <View style={[styles.node, styles.nodeMe, { left: center - 20, top: center - 20 }]}>            
-            <Text style={styles.nodeLabel}>{currentUserProfile.displayName?.[0] || 'U'}</Text>
-          </View>
+          {(() => {
+            const home = pinned['ME'] ? pinned['ME'] : homePositions['ME'];
+            const id = 'ME';
+            const pos = ensureAnimated(id, home);
+            const pan = ensurePan(id, () => (pinned['ME'] ? pinned['ME'] : homePositions['ME']));
+            const isSel = selectedNode === id;
+            return (
+              <Animated.View
+                {...pan.panHandlers}
+                style={[styles.node, styles.nodeMe, isSel && styles.nodeSelected, { position:'absolute', left: pos.x, top: pos.y, width:32, height:32, borderRadius:16 }]}
+              >
+                <TouchableOpacity activeOpacity={0.8} onPress={() => setSelectedNode(s => s === id ? null : id)}>
+                  <Text style={styles.nodeLabel}>{currentUserProfile.displayName?.[0] || 'U'}</Text>
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          })()}
           {/* First ring */}
-          {first.map((p,i) => (
-            <TouchableOpacity
-              key={p.id}
-              style={[styles.node, styles.nodeFirst, isDirect(p) && styles.nodeFirstDirect, { left: firstPos[i].x - 18, top: firstPos[i].y - 18 }]}
-              onPress={() => handleNodePress(p)}
-              accessibilityLabel={`View ${p.displayName || 'builder'} contact`}
-            >              
-              <Text style={styles.nodeLabel}>{p.displayName?.[0] || '?'}</Text>
-            </TouchableOpacity>
-          ))}
+          {first.map((p,i) => {
+            const defaultHome = homePositions[p.id];
+            const home = pinned[p.id] ? pinned[p.id] : defaultHome;
+            const pos = ensureAnimated(p.id, home);
+            const pan = ensurePan(p.id, () => (pinned[p.id] ? pinned[p.id] : homePositions[p.id]));
+            const isSel = selectedNode === p.id;
+            return (
+              <Animated.View key={p.id} {...pan.panHandlers} style={[styles.node, styles.nodeFirst, isSel && styles.nodeSelected, { left: pos.x, top: pos.y, width:26, height:26, borderRadius:13 }]}> 
+                <TouchableOpacity activeOpacity={0.8} onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}>
+                  <Text style={[styles.nodeLabel,{fontSize:11}]}>{p.displayName?.[0] || '?'}</Text>
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          })}
           {/* Second ring */}
-          {secondRingNodes.map((p,i) => (
-            <View key={p.id} style={[styles.node, styles.nodeSecond, { left: secondPos[i].x - 14, top: secondPos[i].y - 14 }]}>              
-              <Text style={styles.nodeLabelSmall}>{p.displayName?.[0] || '?'}</Text>
-            </View>
-          ))}
+          {secondRingNodes.map((p,i) => {
+            const defaultHome = homePositions[p.id];
+            const home = pinned[p.id] ? pinned[p.id] : defaultHome;
+            const pos = ensureAnimated(p.id, home);
+            const pan = ensurePan(p.id, () => (pinned[p.id] ? pinned[p.id] : homePositions[p.id]));
+            const isSel = selectedNode === p.id;
+            return (
+              <Animated.View key={p.id} {...pan.panHandlers} style={[styles.node, styles.nodeSecond, isSel && styles.nodeSelected, { left: pos.x, top: pos.y, width:22, height:22, borderRadius:11 }]}> 
+                <TouchableOpacity activeOpacity={0.8} onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}>
+                  <Text style={[styles.nodeLabelSmall,{fontSize:10}]}>{p.displayName?.[0] || '?'}</Text>
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          })}
           {/* Third ring (reuse nodeSecond style for now) */}
-          {thirdRingNodes.map((p,i) => (
-            <View key={p.id} style={[styles.node, styles.nodeSecond, { left: thirdPos[i].x - 14, top: thirdPos[i].y - 14, opacity:0.9 }]}>              
-              <Text style={styles.nodeLabelSmall}>{p.displayName?.[0] || '?'}</Text>
-            </View>
-          ))}
-        </View>
-        <Text style={styles.graphMeta}>{first.length} direct • {second.length} extended</Text>
+          {thirdRingNodes.map((p,i) => {
+            const defaultHome = homePositions[p.id];
+            const home = pinned[p.id] ? pinned[p.id] : defaultHome;
+            const pos = ensureAnimated(p.id, home);
+            const pan = ensurePan(p.id, () => (pinned[p.id] ? pinned[p.id] : homePositions[p.id]));
+            const isSel = selectedNode === p.id;
+            return (
+              <Animated.View key={p.id} {...pan.panHandlers} style={[styles.node, styles.nodeSecond, isSel && styles.nodeSelected, { left: pos.x, top: pos.y, width:22, height:22, borderRadius:11, opacity:0.9 }]}> 
+                <TouchableOpacity activeOpacity={0.8} onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}>
+                  <Text style={[styles.nodeLabelSmall,{fontSize:10}]}>{p.displayName?.[0] || '?'}</Text>
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          })}
+        </Pressable>
+  <Text style={styles.graphMeta}>{first.length} direct • {second.length} extended</Text>
         {first.length === 0 && (
           <Text style={styles.graphHint}>Swipe right to start building your graph.</Text>
         )}
@@ -525,7 +701,7 @@ export default function ExploreBuilders() {
   return (
     <SafeAreaView style={styles.safeArea}>
       {renderGraph()}
-      <View style={styles.flexDeckWrapper}>
+  <Pressable style={styles.flexDeckWrapper} onPress={resetAllNodes}>
         <View style={styles.flexCardRegion}>
           {currentUserProfile && !allProfiles.find(p => p.id === currentUserProfile.id && (p.likedPosts || p.liked || p.ideaTitle !== undefined)) && (
             <View style={styles.onboardingBanner}>
@@ -575,7 +751,7 @@ export default function ExploreBuilders() {
                   disabled={demoMode}
                   accessibilityLabel={demoMode ? 'Connect disabled in demo mode' : 'Connect with this builder'}
                   style={[styles.rowActionPill, styles.connectPill, demoMode && { opacity: 0.4 }]}
-                  onPress={() => handleLike(deck[index].id, deck[index].authorId)}>
+                  onPress={() => handleLike(deck[index].id)}>
                   <Text style={styles.likeActionText}>{demoMode ? 'Connect (Auth Required)' : 'Connect'}</Text>
                 </TouchableOpacity>
               </View>
@@ -583,7 +759,7 @@ export default function ExploreBuilders() {
           )}
         </View>
         {/* Removed fixed bottomActionBar; actions now inline under card */}
-      </View>
+      </Pressable>
       {lastRemoteError && (
         <View style={styles.remoteErrorBanner}>
           <Text style={styles.remoteErrorText}>Remote error: {lastRemoteError}</Text>
@@ -626,10 +802,16 @@ const styles = StyleSheet.create({
     position: 'relative',
     marginBottom: 8,
   },
+  edgeLineBase: {
+    position: 'absolute',
+    height: 1,
+    backgroundColor: '#ffffff'
+  },
+  // Legacy styles retained (can remove later once confident) -----------------
   edgeLine: {
     position: 'absolute',
     height: 1,
-    backgroundColor: '#2f3f45',
+    backgroundColor: '#2f3f45'
   },
   edgeLineStrong: {
     position: 'absolute',
@@ -658,29 +840,32 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#1f6feb', // GitHub blue accent
     borderWidth: 2,
-    borderColor: '#3b82f6'
+    borderColor: '#388bfd'
   },
   nodeFirst: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#059669',
+    backgroundColor: '#6d5bbf', // Heather / light purple tone
     borderWidth: 2,
     borderColor: '#10b981'
   },
-  nodeFirstDirect: {
-    borderColor: '#fbbf24',
-    borderWidth: 3,
-  },
-  nodeSecond: {
+nodeSecond: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#374151',
+    backgroundColor: '#30363d',
     borderWidth: 2,
-    borderColor: '#4b5563'
+    borderColor: '#484f58'
+  },
+  nodeSelected: {
+    shadowColor: '#ffffff',
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    borderColor: '#ffffff'
   },
   nodeLabel: { color: 'white', fontWeight: '700', fontSize: 14 },
   nodeLabelSmall: { color: 'white', fontWeight: '600', fontSize: 12 },
