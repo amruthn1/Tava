@@ -365,7 +365,9 @@ export default function ProfileScreen() {
           <Text style={styles.connectionsTriggerText}>Direct Connections ({directConnections.length})</Text>
         </TouchableOpacity>
         <View style={styles.divider} />
-        <Text style={styles.sectionLabel}>Posts</Text>
+        <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
+          <Text style={styles.signOutButtonText}>Sign Out</Text>
+        </TouchableOpacity>
       </View>
     );
   }, [user, profile, directConnections, mutualIdSet]);
@@ -386,13 +388,6 @@ export default function ProfileScreen() {
         ) : (
           <View style={{ flex:1, justifyContent:'center', alignItems:'center' }}>
             <Text style={styles.authHint}>Sign in to view profile.</Text>
-          </View>
-        )}
-        {userId && (
-          <View style={styles.floatingSignOutWrap}>
-            <TouchableOpacity style={styles.signOutFloatingBtn} onPress={handleSignOut}>
-              <Text style={styles.signOutFloatingText}>Sign Out</Text>
-            </TouchableOpacity>
           </View>
         )}
         {/* Create Post Modal */}
@@ -474,8 +469,8 @@ export default function ProfileScreen() {
                         <Text style={styles.modalTitle}>Edit Profile</Text>
                         <TouchableOpacity onPress={() => setShowEditProfile(false)} style={styles.closeBtn}><Text style={styles.closeBtnText}>✕</Text></TouchableOpacity>
                       </View>
-                      <Text style={styles.smallLabel}>University</Text>
-                      <TextInput style={styles.input} value={university} onChangeText={setUniversity} placeholder="University" placeholderTextColor="#777" />
+                      <Text style={styles.smallLabel}>Full Name</Text>
+                      <TextInput style={styles.input} value={displayName} onChangeText={setDisplayName} placeholder="Your full name" placeholderTextColor="#777" />
                       <Text style={styles.smallLabel}>Interests (comma separated)</Text>
                       <TextInput style={styles.input} value={interests} onChangeText={setInterests} placeholder="AI, BioTech" placeholderTextColor="#777" />
                       <Text style={styles.smallLabel}>LinkedIn URL</Text>
@@ -620,7 +615,6 @@ const styles = StyleSheet.create({
   ,saveProfileBtn: { backgroundColor:'#2563eb', paddingVertical:12, borderRadius:10, alignItems:'center', marginTop:8 }
   ,saveProfileText: { color:'white', fontWeight:'600', fontSize:15 }
   ,cancelProfileBtn: { alignItems:'center', paddingVertical:10 }
-  ,cancelProfileText: { color:'#64748b', fontSize:13 }
   ,connectionsTrigger: { backgroundColor:'#1b1f24', paddingHorizontal:14, paddingVertical:12, borderRadius:12, borderWidth:1, borderColor:'#2a3139' }
   ,connectionsTriggerText: { color:'#d1d5db', fontSize:13, fontWeight:'600' }
   ,connectionsModalCard: { backgroundColor:'#1e1e1e', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#333', maxHeight:'75%' }
