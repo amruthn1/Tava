@@ -6,7 +6,7 @@ import { Stack, usePathname, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, LogBox, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
@@ -15,6 +15,7 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
+  LogBox.ignoreAllLogs();
   const colorScheme = useColorScheme();
   // undefined = loading, null = no user, User = signed-in
   const [user, setUser] = useState<User | null | undefined>(undefined);
