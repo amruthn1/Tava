@@ -312,7 +312,7 @@ export default function MapScreen() {
                   console.log('Event pin selected', event.id);
                   setSelectedAnnotationId(event.id);
                   if (cameraRef.current) {
-                    cameraRef.current.setCamera({ centerCoordinate: [event.location!.longitude, event.location!.latitude], zoomLevel: 18, animationDuration: 250 });
+                    cameraRef.current.setCamera({ centerCoordinate: [event.location!.longitude, event.location!.latitude], zoomLevel: 16, animationDuration: 250 });
                   }
                 }}
                 onDeselected={() => {
