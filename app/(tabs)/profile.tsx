@@ -28,6 +28,7 @@ export default function ProfileScreen() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
   // Edit profile form state
+  const [displayName, setDisplayName] = useState('');
   const [university, setUniversity] = useState('');
   const [interests, setInterests] = useState('');
   const [linkedinUrl, setLinkedinUrl] = useState('');
@@ -71,6 +72,7 @@ export default function ProfileScreen() {
         console.log('[Profile] User doc loaded: liked=', likedArr.length, 'likedPosts=', likedPostsArr.length);
         const prof: UserProfile = { id: snap.id, displayName: data.displayName, ideaTitle: data.ideaTitle, ideaDescription: data.ideaDescription, bio: data.bio, email: data.email ?? null, liked: likedArr, likedPosts: likedPostsArr, university: data.university ?? null, interests: Array.isArray(data.interests) ? data.interests : [], linkedinUrl: data.linkedinUrl ?? null, websiteUrl: data.websiteUrl ?? null, onboardingComplete: !!data.onboardingComplete };
         setProfile(prof);
+        setDisplayName(prof.displayName || '');
         setUniversity(prof.university || '');
         setInterests((prof.interests || []).join(', '));
         setLinkedinUrl(prof.linkedinUrl || '');
@@ -269,6 +271,7 @@ export default function ProfileScreen() {
       setSavingProfile(true);
       const interestsArr = interests.split(',').map(s => s.trim()).filter(Boolean);
       await setDoc(doc(db,'users',userId), {
+        displayName: displayName.trim() || null,
         university: university.trim() || null,
         interests: interestsArr,
         linkedinUrl: linkedinUrl.trim() || null,
@@ -280,7 +283,7 @@ export default function ProfileScreen() {
     } finally {
       setSavingProfile(false);
     }
-  }, [userId, university, interests, linkedinUrl, websiteUrl]);
+  }, [userId, displayName, university, interests, linkedinUrl, websiteUrl]);
 
   const handleDeletePost = useCallback((postId: string) => {
     if (!userId) return;
@@ -614,6 +617,7 @@ const styles = StyleSheet.create({
   ,smallLabel: { color:'#93c5fd', fontSize:11, fontWeight:'600', marginBottom:6 }
   ,saveProfileBtn: { backgroundColor:'#2563eb', paddingVertical:12, borderRadius:10, alignItems:'center', marginTop:8 }
   ,saveProfileText: { color:'white', fontWeight:'600', fontSize:15 }
+  ,cancelProfileText: { color:'white', fontWeight:'600', fontSize:15 }
   ,cancelProfileBtn: { alignItems:'center', paddingVertical:10 }
   ,connectionsTrigger: { backgroundColor:'#1b1f24', paddingHorizontal:14, paddingVertical:12, borderRadius:12, borderWidth:1, borderColor:'#2a3139' }
   ,connectionsTriggerText: { color:'#d1d5db', fontSize:13, fontWeight:'600' }
