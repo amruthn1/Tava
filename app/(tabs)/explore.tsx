@@ -850,7 +850,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     backgroundColor: '#6d5bbf', // Heather / light purple tone
     borderWidth: 2,
-    borderColor: '#10b981'
+    borderColor: '#2ea043'
   },
 nodeSecond: {
     width: 28,
