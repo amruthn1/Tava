@@ -154,8 +154,10 @@ export default function ExploreBuilders() {
             displayName: data.displayName,
             ideaTitle: data.ideaTitle,
             ideaDescription: data.ideaDescription,
-            liked: Array.isArray(data.liked) ? data.liked : []
-          };
+            liked: Array.isArray(data.liked) ? data.liked : [],
+            likedPosts: Array.isArray(data.likedPosts) ? data.likedPosts : [],
+            passedPosts: Array.isArray(data.passedPosts) ? data.passedPosts : []
+          } as BuilderProfile;
         });
         setAllProfiles(remoteProfiles);
         setLastRemoteError(null);
@@ -223,28 +225,67 @@ export default function ExploreBuilders() {
   // Derive current user profile (if signed in) and build deck from posts.
   useEffect(() => {
     const me = allProfiles.find(p => p.id === currentUserId) || null;
-    setCurrentUserProfile(me);
+    setCurrentUserProfile(me || null);
+    const currentId = deck[index]?.id;
+    let newDeck: PostItem[] = [];
     if (!me) {
-      // Fallback placeholder so new users can still see posts
-      const placeholder: BuilderProfile = { id: currentUserId, displayName: 'You', likedPosts: [], passedPosts: [] };
-      setCurrentUserProfile(placeholder);
       const filtered = posts.filter(p => p.authorId !== currentUserId);
-      const enriched = filtered.map(p => ({ ...p, authorName: allProfiles.find(u => u.id === p.authorId)?.displayName }));
-      enriched.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
-      setDeck(enriched);
-      setIndex(0);
-      return;
+      newDeck = filtered.map(p => ({ ...p, authorName: allProfiles.find(u => u.id === p.authorId)?.displayName }));
+    } else {
+      const passed = new Set(me.passedPosts || []);
+      const likedPosts = new Set(me.likedPosts || []);
+      const filtered = posts.filter(p => p.authorId !== me.id && !passed.has(p.id) && !likedPosts.has(p.id));
+      newDeck = filtered.map(p => ({ ...p, authorName: allProfiles.find(u => u.id === p.authorId)?.displayName }));
     }
-    const passed = new Set(me.passedPosts || []);
-    const likedPosts = new Set(me.likedPosts || []);
-    const filtered = posts.filter(p => p.authorId !== me.id && !passed.has(p.id) && !likedPosts.has(p.id));
-    // Enrich with author display name if available
-    const enriched = filtered.map(p => ({ ...p, authorName: allProfiles.find(u => u.id === p.authorId)?.displayName }));
-    // Simple ordering: newest first
-    enriched.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
-    setDeck(enriched);
-    setIndex(0);
-  }, [allProfiles, currentUserId, posts]);
+    // Sort newest first within each author group first
+    newDeck.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+    // Fairness: if one author has many posts, interleave authors (simple round-robin)
+    if (newDeck.length > 3) {
+      const byAuthor: Record<string, PostItem[]> = {};
+      newDeck.forEach(p => { (byAuthor[p.authorId] = byAuthor[p.authorId] || []).push(p); });
+      Object.values(byAuthor).forEach(arr => arr.sort((a,b) => (b.createdAt||0) - (a.createdAt||0)));
+      const authors = Object.keys(byAuthor).sort();
+      const interleaved: PostItem[] = [];
+      let added = true; let cursor = 0;
+      while (added) {
+        added = false;
+        for (let i = 0; i < authors.length; i++) {
+          const aid = authors[(i + cursor) % authors.length];
+            const bucket = byAuthor[aid];
+            if (bucket.length) {
+              interleaved.push(bucket.shift()!);
+              added = true;
+            }
+        }
+        cursor++;
+      }
+      // Keep original order if interleaving produced same length
+      if (interleaved.length === newDeck.length) {
+        newDeck = interleaved;
+      }
+    }
+    const prevIds = deck.map(p => p.id).join(',');
+    const newIds = newDeck.map(p => p.id).join(',');
+    if (prevIds !== newIds) {
+      // Adjust index intelligently
+      if (currentId) {
+        const stillPos = newDeck.findIndex(p => p.id === currentId);
+        if (stillPos === -1) {
+          // Current removed (liked/passed) – keep same numeric index so next card slides in
+          if (index >= newDeck.length) {
+            setIndex(0);
+          }
+        } else if (stillPos !== index) {
+          setIndex(stillPos);
+        }
+      } else if (index >= newDeck.length && newDeck.length > 0) {
+        setIndex(0);
+      }
+      setDeck(newDeck);
+    } else if (index >= newDeck.length && newDeck.length > 0) {
+      setIndex(0);
+    }
+  }, [allProfiles, currentUserId, posts, deck, index]);
 
   const advance = useCallback(() => {
     setIndex(prev => prev + 1);
@@ -308,115 +349,129 @@ export default function ExploreBuilders() {
     return { first, second };
   }, [currentUserProfile, allProfiles, posts]);
 
-  // Radial layout helpers
+  // Radial layout helpers (adaptive multi-ring)
   const renderGraph = () => {
-    if (!currentUserProfile) return null; // With fabrication above this should rarely hit
-    const size = 200; // container size
-    const center = size / 2;
-    const r1 = 60; // first ring radius
-    const r2 = 90; // second ring radius
+    if (!currentUserProfile) return null;
     const first = graphData.first;
     const second = graphData.second;
-    // position nodes evenly spaced
-    const place = (count: number, radius: number) => {
+
+    // Parameters
+    const MIN_ARC_GAP = 14; // px minimal spacing between node centers along a ring
+    const RING_PADDING = 38; // distance between rings
+    const BASE_RADIUS = 46; // radius for first ring if few nodes
+    const MAX_SIZE = 300; // cap canvas size for performance
+
+    // Compute required radius for a given node count so arc length >= MIN_ARC_GAP
+    const radiusFor = (count: number, base: number) => {
+      if (count <= 1) return base;
+      const needed = MIN_ARC_GAP * count / (2 * Math.PI);
+      return Math.max(base, needed);
+    };
+
+    let r1 = radiusFor(first.length, BASE_RADIUS);
+    let r2 = r1 + RING_PADDING;
+    let r3 = r2 + RING_PADDING; // potential third ring
+
+    // If second ring overcrowded (too many second-degree nodes), spill to third ring
+    const secondCap = Math.floor((2 * Math.PI * r2) / MIN_ARC_GAP);
+    let secondRingNodes: typeof second = [];
+    let thirdRingNodes: typeof second = [];
+    if (second.length > secondCap) {
+      secondRingNodes = second.slice(0, secondCap);
+      thirdRingNodes = second.slice(secondCap);
+    } else {
+      secondRingNodes = second;
+    }
+    if (thirdRingNodes.length === 0) {
+      // shrink r3 if unused
+      r3 = r2;
+    }
+
+    // Final canvas size (diameter of largest ring + node diameter margin)
+    const largestR = thirdRingNodes.length ? r3 : (secondRingNodes.length ? r2 : r1);
+    const nodeDiameter = 40; // approx max
+    const size = Math.min(MAX_SIZE, Math.ceil(largestR * 2 + nodeDiameter + 12));
+    const center = size / 2;
+
+    const place = (count: number, radius: number, offset = -Math.PI / 2) => {
+      if (count === 0) return [] as { x: number; y: number }[];
       return Array.from({ length: count }).map((_, i) => {
-        const angle = (Math.PI * 2 * i) / count - Math.PI / 2; // start top
+        const angle = (Math.PI * 2 * i) / count + offset;
         return { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) };
       });
     };
-    const firstPos = place(Math.max(first.length, 1), r1); // avoid division by zero
-    const secondPos = place(Math.max(second.length, 1), r2);
+    const firstPos = place(first.length, r1);
+    const secondPos = place(secondRingNodes.length, r2, -Math.PI / 2 + Math.PI / (secondRingNodes.length || 1)); // slight phase shift
+    const thirdPos = place(thirdRingNodes.length, r3, -Math.PI / 2 + Math.PI / (thirdRingNodes.length || 1));
+
+    const renderEdges = () => {
+      const edges: React.ReactElement[] = [];
+      // Center -> first
+      first.forEach((p, i) => {
+        const dx = firstPos[i].x - center; const dy = firstPos[i].y - center; const dist = Math.hypot(dx, dy);
+        const angle = Math.atan2(dy, dx); const midX = (firstPos[i].x + center) / 2; const midY = (firstPos[i].y + center) / 2;
+        edges.push(<View key={'edge-f-' + p.id} style={[styles.edgeLineStrong,{ left: midX - dist/2, top: midY - 1, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
+      });
+      // first -> second
+      secondRingNodes.forEach((p, si) => {
+        const parents = first.filter(f => (f.liked || []).includes(p.id));
+        parents.forEach(parent => {
+          const pi = first.indexOf(parent); if (pi === -1) return;
+          const dx = secondPos[si].x - firstPos[pi].x; const dy = secondPos[si].y - firstPos[pi].y; const dist = Math.hypot(dx, dy);
+          const angle = Math.atan2(dy, dx); const midX = (secondPos[si].x + firstPos[pi].x)/2; const midY = (secondPos[si].y + firstPos[pi].y)/2;
+          edges.push(<View key={'edge-s2-' + p.id + '-' + parent.id} style={[styles.edgeLine,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
+        });
+      });
+      // second -> third (treat secondRingNodes as parents for overflow lineage if liked[] matches)
+      thirdRingNodes.forEach((p, ti) => {
+        const parents = [...first, ...secondRingNodes].filter(f => (f.liked || []).includes(p.id));
+        parents.forEach(parent => {
+          const piFirst = first.indexOf(parent);
+          const sourcePos = piFirst !== -1 ? firstPos[piFirst] : secondPos[secondRingNodes.indexOf(parent)];
+          if (!sourcePos) return;
+          const dx = thirdPos[ti].x - sourcePos.x; const dy = thirdPos[ti].y - sourcePos.y; const dist = Math.hypot(dx, dy);
+          const angle = Math.atan2(dy, dx); const midX = (thirdPos[ti].x + sourcePos.x)/2; const midY = (thirdPos[ti].y + sourcePos.y)/2;
+          edges.push(<View key={'edge-s3-' + p.id + '-' + parent.id} style={[styles.edgeLine,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
+        });
+      });
+      return edges;
+    };
+
+    const ringConnectors = (positions: {x:number;y:number}[], style: any, prefix: string) => positions.length > 1 ? positions.map((pos,i) => {
+      const next = positions[(i+1)%positions.length]; const dx = next.x - pos.x; const dy = next.y - pos.y; const dist = Math.hypot(dx,dy); const angle = Math.atan2(dy,dx); const midX = (pos.x + next.x)/2; const midY = (pos.y + next.y)/2; return <View key={prefix + i} style={[style,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />; }) : null;
 
     return (
       <View style={styles.graphWrapper}>
-        <View style={[styles.graphCanvas, { width: size, height: size }]}>          
-          {/* Edges center -> first-degree */}
-          {first.map((p, i) => {
-            const dx = firstPos[i].x - center;
-            const dy = firstPos[i].y - center;
-            const dist = Math.hypot(dx, dy);
-            const angle = Math.atan2(dy, dx);
-            const midX = (firstPos[i].x + center) / 2;
-            const midY = (firstPos[i].y + center) / 2;
-            return (
-              <View key={'edge-f-' + p.id} style={[styles.edgeLineStrong, {
-                left: midX - dist / 2,
-                top: midY - 1, // center vertically for 2px height
-                width: dist,
-                transform: [{ rotate: `${angle}rad` }]
-              }]} />
-            );
-          })}
-          {/* Edges first-degree -> second-degree (allow multiple parents) */}
-          {second.flatMap((p, si) => {
-            const parents = graphData.first.filter(f => (f.liked || []).includes(p.id));
-            if (!parents.length) return [] as React.ReactElement[];
-            return parents.map(parent => {
-              const pi = graphData.first.indexOf(parent);
-              if (pi === -1) return null;
-              const dx = secondPos[si].x - firstPos[pi].x;
-              const dy = secondPos[si].y - firstPos[pi].y;
-              const dist = Math.hypot(dx, dy);
-              const angle = Math.atan2(dy, dx);
-              const midX = (secondPos[si].x + firstPos[pi].x) / 2;
-              const midY = (secondPos[si].y + firstPos[pi].y) / 2;
-              return (
-                <View key={'edge-s-' + p.id + '-' + parent.id} style={[styles.edgeLine, {
-                  left: midX - dist / 2,
-                  top: midY - 0.5,
-                  width: dist,
-                  transform: [{ rotate: `${angle}rad` }]
-                }]} />
-              );
-            }).filter(Boolean) as React.ReactElement[];
-          })}
-          {/* Ring connectors (first-degree ring) */}
-          {first.length > 1 && firstPos.map((pos, i) => {
-            const next = firstPos[(i + 1) % firstPos.length];
-            const dx = next.x - pos.x; const dy = next.y - pos.y; const dist = Math.hypot(dx, dy);
-            const angle = Math.atan2(dy, dx); const midX = (pos.x + next.x) / 2; const midY = (pos.y + next.y) / 2;
-            return (
-              <View key={'ring-f-' + i} style={[styles.ringLine, {
-                left: midX - dist / 2,
-                top: midY - 0.5,
-                width: dist,
-                transform: [{ rotate: `${angle}rad` }]
-              }]} />
-            );
-          })}
-          {/* Ring connectors (second-degree ring) */}
-          {second.length > 1 && secondPos.map((pos, i) => {
-            const next = secondPos[(i + 1) % secondPos.length];
-            const dx = next.x - pos.x; const dy = next.y - pos.y; const dist = Math.hypot(dx, dy);
-            const angle = Math.atan2(dy, dx); const midX = (pos.x + next.x) / 2; const midY = (pos.y + next.y) / 2;
-            return (
-              <View key={'ring-s-' + i} style={[styles.ringLineOuter, {
-                left: midX - dist / 2,
-                top: midY - 0.5,
-                width: dist,
-                transform: [{ rotate: `${angle}rad` }]
-              }]} />
-            );
-          })}
+        <View style={[styles.graphCanvas,{ width: size, height: size }]}>          
+          {renderEdges()}
+          {ringConnectors(firstPos, styles.ringLine, 'rf-')}
+          {ringConnectors(secondPos, styles.ringLineOuter, 'rs-')}
+          {thirdRingNodes.length > 1 && ringConnectors(thirdPos, styles.ringLineOuter, 'rt-')}
           {/* Center node */}
           <View style={[styles.node, styles.nodeMe, { left: center - 20, top: center - 20 }]}>            
             <Text style={styles.nodeLabel}>{currentUserProfile.displayName?.[0] || 'U'}</Text>
           </View>
-          {/* First-degree nodes */}
-          {first.map((p, i) => (
+          {/* First ring */}
+          {first.map((p,i) => (
             <View key={p.id} style={[styles.node, styles.nodeFirst, { left: firstPos[i].x - 18, top: firstPos[i].y - 18 }]}>              
               <Text style={styles.nodeLabel}>{p.displayName?.[0] || '?'}</Text>
             </View>
           ))}
-          {/* Second-degree nodes */}
-          {second.map((p, i) => (
+          {/* Second ring */}
+          {secondRingNodes.map((p,i) => (
             <View key={p.id} style={[styles.node, styles.nodeSecond, { left: secondPos[i].x - 14, top: secondPos[i].y - 14 }]}>              
               <Text style={styles.nodeLabelSmall}>{p.displayName?.[0] || '?'}</Text>
             </View>
           ))}
+          {/* Third ring (reuse nodeSecond style for now) */}
+          {thirdRingNodes.map((p,i) => (
+            <View key={p.id} style={[styles.node, styles.nodeSecond, { left: thirdPos[i].x - 14, top: thirdPos[i].y - 14, opacity:0.9 }]}>              
+              <Text style={styles.nodeLabelSmall}>{p.displayName?.[0] || '?'}</Text>
+            </View>
+          ))}
         </View>
-        <Text style={styles.graphMeta}>{graphData.first.length} direct • {graphData.second.length} extended</Text>
-        {graphData.first.length === 0 && (
+        <Text style={styles.graphMeta}>{first.length} direct • {second.length} extended</Text>
+        {first.length === 0 && (
           <Text style={styles.graphHint}>Swipe right to start building your graph.</Text>
         )}
         {demoMode && (
