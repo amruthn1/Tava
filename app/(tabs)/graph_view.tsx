@@ -247,7 +247,7 @@ export default function ExploreBuilders() {
   // Local initialize dummy data (runs once) – used only for demo mode; once authenticated we rely on remote docs
   useEffect(() => {
     if (initialized) return;
-    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', email: 'you@example.com', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
+    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', email: 'you@example.com', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [], interests: ['Networking', 'Innovation', 'Startups'] };
     setAllProfiles([localUser, ...INITIAL_PROFILES]);
     setInitialized(true);
   }, [initialized]);
@@ -269,7 +269,8 @@ export default function ExploreBuilders() {
             ideaDescription: data.ideaDescription,
             liked: Array.isArray(data.liked) ? data.liked : [],
             likedPosts: Array.isArray(data.likedPosts) ? data.likedPosts : [],
-            passedPosts: Array.isArray(data.passedPosts) ? data.passedPosts : []
+            passedPosts: Array.isArray(data.passedPosts) ? data.passedPosts : [],
+            interests: Array.isArray(data.interests) ? data.interests : []
           } as BuilderProfile;
         });
         setAllProfiles(remoteProfiles);
@@ -315,7 +316,7 @@ export default function ExploreBuilders() {
   }, [allProfiles, currentUserId]);
 
   const resetDemo = useCallback(() => {
-    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', email: 'you@example.com', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
+    const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', email: 'you@example.com', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [], interests: ['Networking', 'Innovation', 'Startups'] };
     setAllProfiles([localUser, ...INITIAL_PROFILES]);
     setCurrentUserProfile(localUser);
   }, []);
@@ -708,7 +709,6 @@ export default function ExploreBuilders() {
             return (
               <View style={styles.nodeDetailsContainer}>
                 <Text style={styles.detailsName}>{displayName}</Text>
-                <Text style={styles.detailsEmail}>{email}</Text>
                 <Text style={styles.detailsIdeaTitle}>{ideaTitle}</Text>
                 <Text style={styles.detailsIdeaDesc} numberOfLines={2}>{ideaDescription}</Text>
                 <View style={styles.interestsContainer}>
@@ -727,9 +727,9 @@ export default function ExploreBuilders() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#0d0d0d' },
   splitLayoutContainer: { flex: 1 },
-  graphSection: { flex: 0.4, backgroundColor:'#121212', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#1f2937' },
+  graphSection: { flex: 0.6, backgroundColor:'#121212', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#1f2937' },
   detailsSection: { 
-    flex: 0.6, 
+    flex: 0.4, 
     backgroundColor: '#0d0d0d', 
     paddingHorizontal: 20, 
     paddingVertical: 16,
