@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
 export const unstable_settings = {
@@ -81,9 +82,11 @@ export default function RootLayout() {
 
   if (user === undefined || (user === null && (!attemptedAutoSignIn || autoSignInInProgress))) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" />
-      </View>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" />
+        </View>
+      </GestureHandlerRootView>
     );
   }
 
@@ -108,11 +111,13 @@ export default function RootLayout() {
   // ) : null;
 
   return (
-    <ThemeProvider value={theme}>
-      <>
-        {children}
-        {/* {debugOverlay} */}
-      </>
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider value={theme}>
+        <>
+          {children}
+          {/* {debugOverlay} */}
+        </>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }

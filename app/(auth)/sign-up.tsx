@@ -1,8 +1,9 @@
 import { saveCredentials } from '@/constants/credentialStore';
-import { auth } from '@/constants/firebase';
+import { auth, db } from '@/constants/firebase';
 import { Colors } from '@/constants/theme';
 import { router } from 'expo-router';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import { useState } from 'react';
 import { Alert, Image, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -36,10 +37,29 @@ export default function SignUpScreen() {
     
     setIsLoading(true);
     try {
-      await createUserWithEmailAndPassword(auth, email.trim(), password);
-      // Save credentials securely for future silent sign-in (manual persistence fallback)
-      await saveCredentials(email.trim(), password);
-      router.replace('/(tabs)'); // Navigate to main app
+  const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  await saveCredentials(email.trim(), password);
+  // Initialize user document if not present
+  try {
+    const uid = cred.user.uid;
+    await setDoc(doc(db, 'users', uid), {
+      displayName: email.trim(),
+      ideaTitle: null,
+      ideaDescription: null,
+      liked: [],
+      likedPosts: [],
+      passedPosts: [],
+      university: null,
+      interests: [],
+      linkedinUrl: null,
+      websiteUrl: null,
+      onboardingComplete: false,
+      createdAt: Date.now()
+    }, { merge: true });
+  } catch(e) {
+    // Non-fatal; onboarding setDoc will still work
+  }
+  router.replace('/onboarding');
     } catch (error: any) {
       Alert.alert('Sign Up Failed', error.message);
     } finally {
