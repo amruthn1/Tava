@@ -7,7 +7,6 @@ import { signOut } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, /* orderBy */ query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface PostItem { id: string; title: string; description?: string | null; createdAt?: number; }
@@ -349,29 +348,35 @@ export default function ProfileScreen() {
           transparent={true}
           onRequestClose={() => setShowCreateModal(false)}
         >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCardWrapper}>
-              <KeyboardAvoidingView 
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={{ flex: 1 }}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-              >
-                <View style={styles.editModalCard}>
-                  <View style={styles.modalHeader}>
-                    <Text style={styles.modalTitle}>Create Post</Text>
-                    <TouchableOpacity 
-                      onPress={() => setShowCreateModal(false)} 
-                      style={styles.closeBtn}
-                    >
-                      <Text style={styles.closeBtnText}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                  
-                  <ScrollView 
-                    style={styles.modalScrollView}
-                    contentContainerStyle={styles.modalContentContainer}
-                    keyboardShouldPersistTaps="handled"
+          <TouchableWithoutFeedback onPress={() => {
+            Keyboard.dismiss();
+            setShowCreateModal(false);
+          }}>
+            <View style={styles.modalOverlay}>
+              <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                <View style={styles.modalCardWrapper}>
+                  <KeyboardAvoidingView 
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    style={{ flex: 1 }}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? 20 : 0}
                   >
+                    <TouchableWithoutFeedback onPress={() => {}}>
+                      <View style={styles.editModalCard}>
+                        <View style={styles.modalHeader}>
+                          <Text style={styles.modalTitle}>Create Post</Text>
+                          <TouchableOpacity 
+                            onPress={() => setShowCreateModal(false)} 
+                            style={styles.closeBtn}
+                          >
+                            <Text style={styles.closeBtnText}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                        
+                        <ScrollView 
+                          style={styles.modalScrollView}
+                          contentContainerStyle={styles.modalContentContainer}
+                          keyboardShouldPersistTaps="handled"
+                        >
                     <TextInput
                       style={styles.input}
                       placeholder="Project Title"
@@ -456,21 +461,24 @@ export default function ProfileScreen() {
                     )}
                   </ScrollView>
                   
-                  <View style={styles.modalFooter}>
-                    <TouchableOpacity 
-                      disabled={submitting} 
-                      style={[styles.saveProfileBtn, submitting && { opacity: 0.5 }]} 
-                      onPress={handleSubmit}
-                    >
-                      <Text style={styles.saveProfileText}>
-                        {submitting ? 'Publishing...' : 'Publish Post'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                        <View style={styles.modalFooter}>
+                          <TouchableOpacity 
+                            disabled={submitting} 
+                            style={[styles.saveProfileBtn, submitting && { opacity: 0.5 }]} 
+                            onPress={handleSubmit}
+                          >
+                            <Text style={styles.saveProfileText}>
+                              {submitting ? 'Publishing...' : 'Publish Post'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </TouchableWithoutFeedback>
+                  </KeyboardAvoidingView>
                 </View>
-              </KeyboardAvoidingView>
+              </TouchableWithoutFeedback>
             </View>
-          </View>
+          </TouchableWithoutFeedback>
         </Modal>
         {/* Edit Profile Modal */}
         <Modal visible={showEditProfile} animationType="fade" transparent onRequestClose={() => setShowEditProfile(false)}>
@@ -563,7 +571,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
     width: '100%',
-    margin: 0,
+    paddingTop: 60,
   },
   modalOverlay: { 
     flex: 1,
@@ -576,7 +584,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     borderWidth: 1,
     borderColor: '#2a2a2a',
-    maxHeight: '95%',
+    maxHeight: '90%',
+    minHeight: '70%',
     width: '100%',
     paddingTop: Platform.OS === 'ios' ? 0 : 20,
   },

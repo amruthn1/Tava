@@ -25,22 +25,21 @@ export default function TabLayout() {
           ),
         }}
       />
-
-      <Tabs.Screen
-        name="map"
-        options={{
-          title: "Map",
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="map" color={color} />
-          ),
-        }}
-      />
       <Tabs.Screen
         name="graph_view"
         options={{
           title: "Connections",
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="link" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="map"
+        options={{
+          title: "Map",
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={28} name="map" color={color} />
           ),
         }}
       />

@@ -1,32 +1,28 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Dimensions, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { auth, db } from '@/constants/firebase';
-import { POSTS_COLLECTION } from '@/types/post';
+import { POSTS_COLLECTION, Post } from '@/types/post';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { arrayUnion, collection, doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Dimensions, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 
-interface BuilderProfile {
-  id: string;
-  displayName?: string;
-  email?: string | null;
-  ideaTitle?: string | null;
-  ideaDescription?: string | null;
+interface UserLite { 
+  id: string; 
+  displayName?: string | null; 
+  email?: string | null; 
   interests?: string[];
-  liked?: string[];
-  passedPosts?: string[];
 }
 
 export default function SwipeFull() {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(auth.currentUser);
   const currentUserId = firebaseUser?.uid;
 
-  const [allProfiles, setAllProfiles] = useState<BuilderProfile[]>([]);
-  const [authorsWithProjects, setAuthorsWithProjects] = useState<Set<string>>(new Set());
-  const [userLiked, setUserLiked] = useState<Set<string>>(new Set());
-  const [userDismissed, setUserDismissed] = useState<Set<string>>(new Set());
-  const [localDismissed, setLocalDismissed] = useState<Set<string>>(new Set());
+  const [allPosts, setAllPosts] = useState<Post[]>([]);
+  const [usersMap, setUsersMap] = useState<Map<string, UserLite>>(new Map());
+  const [userLikedPosts, setUserLikedPosts] = useState<Set<string>>(new Set());
+  const [userDismissedPosts, setUserDismissedPosts] = useState<Set<string>>(new Set());
+  const [localDismissedPosts, setLocalDismissedPosts] = useState<Set<string>>(new Set());
   const [sessionDismissed, setSessionDismissed] = useState<Set<string>>(new Set());
   const [sessionLiked, setSessionLiked] = useState<Set<string>>(new Set());
   const [index, setIndex] = useState(0);
@@ -36,112 +32,143 @@ export default function SwipeFull() {
     return () => unsub();
   }, []);
 
+  // Subscribe to all posts
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'users'), snap => {
-      const list: BuilderProfile[] = snap.docs.map(d => {
+    const unsub = onSnapshot(collection(db, POSTS_COLLECTION), snap => {
+      const posts: Post[] = [];
+      
+      snap.forEach(d => {
         const data: any = d.data() || {};
-        return {
-          id: d.id,
-          displayName: data.displayName,
-          email: data.email ?? null,
-          ideaTitle: data.ideaTitle ?? null,
-          ideaDescription: data.ideaDescription ?? null,
-          interests: Array.isArray(data.interests) ? data.interests : [],
-          liked: Array.isArray(data.liked) ? data.liked : [],
-        };
+        if (data.authorId && data.authorId !== currentUserId) { // Exclude current user's posts
+          posts.push({
+            id: d.id,
+            ...data,
+          } as Post);
+        }
       });
-      const filtered = list.filter(p => p.id !== currentUserId);
-      setAllProfiles(filtered);
+      
+      // Sort by creation time, newest first
+      posts.sort((a, b) => {
+        const timeA = a.createdAt ?? 0;
+        const timeB = b.createdAt ?? 0;
+        return timeB - timeA;
+      });
+      
+      setAllPosts(posts);
     });
     return () => unsub();
   }, [currentUserId]);
 
-  // Subscribe to current user's own doc to track liked and dismissed users (when signed-in)
+  // Subscribe to users for profile info
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'users'), snap => {
+      const userMap = new Map<string, UserLite>();
+      
+      snap.docs.forEach(d => {
+        const data: any = d.data() || {};
+        userMap.set(d.id, {
+          id: d.id,
+          displayName: data.displayName || null,
+          email: data.email ?? null,
+          interests: Array.isArray(data.interests) ? data.interests : [],
+        });
+      });
+      
+      setUsersMap(userMap);
+    });
+    return () => unsub();
+  }, []);
+
+  // Subscribe to current user's liked and dismissed posts
   useEffect(() => {
     if (!currentUserId) return;
     const ref = doc(db, 'users', currentUserId);
     const unsub = onSnapshot(ref, snap => {
       if (snap.exists()) {
         const data: any = snap.data() || {};
-        setUserLiked(new Set<string>(Array.isArray(data.liked) ? data.liked : []));
-        setUserDismissed(new Set<string>(Array.isArray(data.dismissedUsers) ? data.dismissedUsers : []));
+        setUserLikedPosts(new Set<string>(Array.isArray(data.likedPosts) ? data.likedPosts : []));
+        setUserDismissedPosts(new Set<string>(Array.isArray(data.dismissedPosts) ? data.dismissedPosts : []));
       }
     });
     return () => unsub();
   }, [currentUserId]);
 
-  // Subscribe to projects (posts) and keep set of authors who have at least one project
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, POSTS_COLLECTION), snap => {
-      const authors = new Set<string>();
-      snap.forEach(d => {
-        const data: any = d.data() || {};
-        if (data.authorId) authors.add(String(data.authorId));
-      });
-      setAuthorsWithProjects(authors);
+  // Derived list: filter posts based on user interactions
+  const posts = useMemo(() => {
+    const dismissSet = currentUserId ? userDismissedPosts : localDismissedPosts;
+    
+    return allPosts.filter(post => {
+      // Filter out posts the user has already liked or dismissed
+      if (userLikedPosts.has(post.id)) return false;
+      if (dismissSet.has(post.id)) return false;
+      
+      // Filter out posts dismissed/liked in this session
+      if (sessionDismissed.has(post.id) || sessionLiked.has(post.id)) return false;
+      
+      return true;
     });
-    return () => unsub();
-  }, []);
+  }, [allPosts, userDismissedPosts, userLikedPosts, localDismissedPosts, sessionDismissed, sessionLiked, currentUserId]);
 
-  // Derived list: only show profiles that have available projects
-  const profiles = useMemo(() => {
-    const dismissSet = currentUserId ? userDismissed : localDismissed;
-    return allProfiles
-      .filter(p => authorsWithProjects.has(p.id))
-      .filter(p => !dismissSet.has(p.id))
-      .filter(p => !userLiked.has(p.id))
-      .filter(p => !sessionDismissed.has(p.id))
-      .filter(p => !sessionLiked.has(p.id));
-  }, [allProfiles, authorsWithProjects, userDismissed, userLiked, localDismissed, sessionDismissed, sessionLiked, currentUserId]);
-
-  // Keep card index in range when profiles change
+  // Keep card index in range when posts change
   useEffect(() => {
-    if (index >= profiles.length) setIndex(0);
-  }, [profiles.length, index]);
+    if (index >= posts.length) setIndex(0);
+  }, [posts.length, index]);
 
-  const current = profiles[index];
+  const currentPost = posts[index];
+  const currentUser = currentPost ? usersMap.get(currentPost.authorId) : null;
 
   const advance = useCallback(() => setIndex(i => i + 1), []);
 
   const handlePass = useCallback(async () => {
-    if (!current) return;
-    // Optimistically hide this user in-session
-    setSessionDismissed(prev => new Set(prev).add(current.id));
+    if (!currentPost) return;
+    
+    // Optimistically hide this post in-session
+    setSessionDismissed(prev => new Set(prev).add(currentPost.id));
+    
     if (currentUserId) {
       try {
-        await updateDoc(doc(db, 'users', currentUserId), { dismissedUsers: arrayUnion(current.id) });
+        await updateDoc(doc(db, 'users', currentUserId), { 
+          dismissedPosts: arrayUnion(currentPost.id)
+        });
       } catch (e) {
         // Fallback to local set if write fails
-        setLocalDismissed(prev => new Set(prev).add(current.id));
+        setLocalDismissedPosts(prev => new Set(prev).add(currentPost.id));
       }
     } else {
-      setLocalDismissed(prev => new Set(prev).add(current.id));
+      setLocalDismissedPosts(prev => new Set(prev).add(currentPost.id));
     }
     advance();
-  }, [advance, current, currentUserId]);
+  }, [advance, currentPost, currentUserId]);
 
   const handleConnect = useCallback(async () => {
-    if (!currentUserId || !current) return;
-    // Optimistically hide this user in-session
-    setSessionLiked(prev => new Set(prev).add(current.id));
+    if (!currentUserId || !currentPost) return;
+    // Optimistically hide this post in-session
+    setSessionLiked(prev => new Set(prev).add(currentPost.id));
     try {
-      await updateDoc(doc(db, 'users', currentUserId), { liked: arrayUnion(current.id) });
+      await updateDoc(doc(db, 'users', currentUserId), { 
+        likedPosts: arrayUnion(currentPost.id),
+        liked: arrayUnion(currentPost.authorId) // Also add the user to liked users
+      });
       advance();
     } catch (e) {
       // If it fails, revert optimistic hide
-      setSessionLiked(prev => { const next = new Set(prev); next.delete(current.id); return next; });
+      setSessionLiked(prev => { const next = new Set(prev); next.delete(currentPost.id); return next; });
       Alert.alert('Error', 'Could not connect.');
     }
-  }, [currentUserId, current, advance]);
+  }, [currentUserId, currentPost, advance]);
 
-  const avatarLetter = (current?.displayName || current?.email || 'U').trim()[0]?.toUpperCase() || 'U';
-  const interestsText = (current?.interests && current.interests.length) ? current.interests.slice(0, 8).join(' · ') : 'No interests listed';
+  const avatarLetter = (currentUser?.displayName || currentUser?.email || `User ${currentPost?.authorId?.substring(0, 8)}` || 'U').trim()[0]?.toUpperCase() || 'U';
+  const interestsText = (currentUser?.interests && currentUser.interests.length) ? currentUser.interests.slice(0, 8).join(' · ') : 'No interests listed';
+  const displayName = currentUser?.displayName || currentUser?.email || `User ${currentPost?.authorId?.substring(0, 8)}` || 'Builder';
 
   return (
     <SafeAreaView style={styles.container}>
-      {!current ? (
+      {!currentPost ? (
         <View style={styles.emptyWrap}>
-          <Text style={styles.emptyText}>No more profiles</Text>
+          <Text style={styles.emptyText}>No more posts to explore</Text>
+          <Text style={styles.debugText}>
+            Check back later for new projects and posts!
+          </Text>
         </View>
       ) : (
         <View style={styles.cardFull}>
@@ -151,8 +178,8 @@ export default function SwipeFull() {
               <Text style={styles.avatarText}>{avatarLetter}</Text>
             </View>
             <View style={{ marginLeft: 12, flexShrink: 1 }}>
-              <Text style={styles.name} numberOfLines={1}>{current.displayName || 'Builder'}</Text>
-              {!!current.email && <Text style={styles.subtle} numberOfLines={1}>{current.email}</Text>}
+              <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
+              {!!currentUser?.email && <Text style={styles.subtle} numberOfLines={1}>{currentUser.email}</Text>}
             </View>
           </View>
 
@@ -162,15 +189,11 @@ export default function SwipeFull() {
             <Text style={styles.chipsText} numberOfLines={2}>{interestsText}</Text>
           </View>
 
-          {/* Project details under interests */}
-          {(!!current.ideaTitle || !!current.ideaDescription) && (
-            <View style={styles.sectionCard}>
-              {!!current.ideaTitle && <Text style={styles.ideaTitle}>{current.ideaTitle}</Text>}
-              {!!current.ideaDescription && <Text style={styles.ideaDesc}>{current.ideaDescription}</Text>}
-            </View>
-          )}
-
-          {/* (Profile navigation removed) */}
+          {/* Post content */}
+          <View style={styles.sectionCard}>
+            {!!currentPost.title && <Text style={styles.ideaTitle}>{currentPost.title}</Text>}
+            {!!currentPost.description && <Text style={styles.ideaDesc}>{currentPost.description}</Text>}
+          </View>
 
           {/* Footer actions */}
           <View style={styles.footerRow}>
@@ -191,6 +214,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0d0d0d' },
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { color: '#888' },
+  debugText: { color: '#888', fontSize: 14, marginTop: 8, textAlign: 'center' },
   cardFull: {
     flex: 1,
     margin: 16,

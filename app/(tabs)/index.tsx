@@ -6,7 +6,7 @@ import SwipeFull from '../components/swipe-full';
 type ExploreMode = 'search' | 'swipe';
 
 export default function index() {
-  const [mode, setMode] = useState<ExploreMode>('swipe');
+  const [mode, setMode] = useState<ExploreMode>('search');
 
   return (
     <SafeAreaView style={styles.safeArea}>
