@@ -38,9 +38,9 @@ export default function TabLayout() {
       <Tabs.Screen
         name="graph_view"
         options={{
-          title: "Graph View",
+          title: "Connections",
           tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="calendar" color={color} />
+            <IconSymbol size={28} name="link" color={color} />
           ),
         }}
       />

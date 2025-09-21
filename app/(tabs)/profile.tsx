@@ -4,7 +4,7 @@ import { POSTS_COLLECTION } from '@/types/post';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, documentId, onSnapshot, /* orderBy */ query, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, onSnapshot, /* orderBy */ query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,9 +22,6 @@ export default function ProfileScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [posts, setPosts] = useState<PostItem[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [likedMeProfiles, setLikedMeProfiles] = useState<UserProfile[]>([]);
-  const [myLikedProfiles, setMyLikedProfiles] = useState<UserProfile[]>([]);
-  const [postAuthorProfiles, setPostAuthorProfiles] = useState<UserProfile[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
   // Edit profile form state
@@ -34,7 +31,6 @@ export default function ProfileScreen() {
   const [linkedinUrl, setLinkedinUrl] = useState('');
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
-  // Removed connections modal; direct connections now inline
   // Optional location for new post
   const [attachLocation, setAttachLocation] = useState(false);
   const [currentCoords, setCurrentCoords] = useState<{ latitude:number; longitude:number } | null>(null);
@@ -91,93 +87,6 @@ export default function ProfileScreen() {
     return () => unsub();
   }, [userId]);
 
-  // Subscribe to users who liked the current user; mutuals are direct connections
-  useEffect(() => {
-    if (!userId) return;
-    const q = query(collection(db, 'users'), where('liked', 'array-contains', userId));
-    const unsub = onSnapshot(q, snap => {
-      const items: UserProfile[] = snap.docs.map(d => {
-        const data: any = d.data() || {};
-        return { id: d.id, displayName: data.displayName, bio: data.bio, email: data.email ?? null } as UserProfile;
-      });
-      setLikedMeProfiles(items);
-    }, err => {
-      console.warn('[Profile] liked-by query failed', err);
-    });
-    return () => unsub();
-  }, [userId]);
-
-  // Fetch my liked user profiles (chunked by 10 due to Firestore 'in' limits)
-  useEffect(() => {
-    const liked = profile?.liked || [];
-    if (!userId || liked.length === 0) { setMyLikedProfiles([]); return; }
-    const chunks: string[][] = [];
-    for (let i = 0; i < liked.length; i += 10) chunks.push(liked.slice(i, i + 10));
-    const unsubs: Array<() => void> = [];
-    const all: Record<string, UserProfile> = {};
-    chunks.forEach(chunk => {
-      const q = query(collection(db, 'users'), where(documentId(), 'in', chunk));
-      const unsub = onSnapshot(q, snap => {
-        snap.docs.forEach(d => {
-          const data: any = d.data() || {};
-          all[d.id] = { id: d.id, displayName: data.displayName, bio: data.bio, email: data.email ?? null };
-        });
-        // Preserve liked order roughly
-        const ordered = liked.map(id => all[id]).filter(Boolean) as UserProfile[];
-        setMyLikedProfiles(ordered);
-      });
-      unsubs.push(unsub);
-    });
-    return () => { unsubs.forEach(u => { try { u(); } catch {} }); };
-  }, [db, userId, profile?.liked]);
-
-  // Fetch authors of posts I've liked (to mirror Connect tab first-ring)
-  useEffect(() => {
-    const likedPosts = profile?.likedPosts || [];
-    if (!userId || likedPosts.length === 0) { setPostAuthorProfiles([]); return; }
-    const postChunks: string[][] = [];
-    for (let i = 0; i < likedPosts.length; i += 10) postChunks.push(likedPosts.slice(i, i + 10));
-    const postUnsubs: Array<() => void> = [];
-    let authorUnsubs: Array<() => void> = [];
-    const authorsMap: Record<string, UserProfile> = {};
-    const authorIdsSet: Set<string> = new Set();
-    // subscribe to liked posts
-    postChunks.forEach(chunk => {
-      const pq = query(collection(db, POSTS_COLLECTION), where(documentId(), 'in', chunk));
-      const punsub = onSnapshot(pq, snap => {
-        snap.docs.forEach(d => { const data: any = d.data() || {}; if (data.authorId && data.authorId !== userId) authorIdsSet.add(data.authorId); });
-        const ids = Array.from(authorIdsSet);
-        // resubscribe authors
-        authorUnsubs.forEach(u => { try { u(); } catch {} });
-        authorUnsubs = [];
-        const authorChunks: string[][] = [];
-        for (let i = 0; i < ids.length; i += 10) authorChunks.push(ids.slice(i, i + 10));
-        authorChunks.forEach(aChunk => {
-          const uq = query(collection(db, 'users'), where(documentId(), 'in', aChunk));
-          const uunsub = onSnapshot(uq, usnap => {
-            usnap.docs.forEach(u => { const ud: any = u.data() || {}; authorsMap[u.id] = { id: u.id, displayName: ud.displayName, email: ud.email ?? null } as UserProfile; });
-            const ordered = ids.map(id => authorsMap[id]).filter(Boolean) as UserProfile[];
-            console.log('[Profile] post-author profiles updated:', ordered.length);
-            setPostAuthorProfiles(ordered);
-          });
-          authorUnsubs.push(uunsub);
-        });
-      }, err => { console.warn('[Profile] posts in-query failed', err); });
-      postUnsubs.push(punsub);
-    });
-    return () => { postUnsubs.forEach(u => { try { u(); } catch {} }); authorUnsubs.forEach(u => { try { u(); } catch {} }); };
-  }, [db, userId, profile?.likedPosts]);
-
-  // First-degree connections (one hop): union of person-liked and likedPost authors
-  const mutualIdSet = useMemo(() => new Set(likedMeProfiles.map(u => u.id)), [likedMeProfiles]);
-  const directConnections = useMemo(() => {
-    const seen = new Set<string>();
-    const combined: UserProfile[] = [];
-    myLikedProfiles.forEach(p => { if (!seen.has(p.id)) { seen.add(p.id); combined.push(p); } });
-    postAuthorProfiles.forEach(p => { if (!seen.has(p.id)) { seen.add(p.id); combined.push(p); } });
-    console.log('[Profile] derived direct connections count:', combined.length, '(person-liked=', myLikedProfiles.length, ', liked-post-authors=', postAuthorProfiles.length, ')');
-    return combined;
-  }, [myLikedProfiles, postAuthorProfiles]);
 
   const handleSubmit = useCallback(async () => {
     if (!userId) {
@@ -376,38 +285,10 @@ export default function ProfileScreen() {
           </View>
         )}
         
-        <View style={styles.divider} />
-        
-        {/* 3. DIRECT CONNECTIONS SECTION */}
-        <Text style={[styles.connectionsTriggerText,{ marginBottom:12 }]}>Direct Connections ({directConnections.length})</Text>
-        {directConnections.length === 0 ? (
-          <Text style={styles.emptyText}>No direct connections yet.</Text>
-        ) : (
-          <View style={{ marginBottom:8 }}>
-            {directConnections.map(conn => {
-              const mutual = mutualIdSet.has(conn.id);
-              return (
-                <View key={conn.id} style={styles.connCard}>
-                  <View style={{ flex:1 }}>
-                    <Text style={styles.connName}>{conn.displayName || 'Unnamed'}</Text>
-                    {mutual && !!conn.email && <Text style={styles.connSub}>{conn.email}</Text>}
-                    {!mutual && <Text style={[styles.connSub,{ color:'#9ca3af' }]}>Waiting for mutual connect</Text>}
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.connActionBtn, (!conn.email || !mutual) && { opacity:0.35 }]}
-                    disabled={!conn.email || !mutual}
-                    onPress={() => { try { if (conn.email) Linking.openURL(`mailto:${encodeURIComponent(conn.email)}`); } catch {} }}>
-                    <Text style={styles.connActionText}>Email</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
-          </View>
-        )}
-        <View style={styles.divider} />
+
       </View>
     );
-  }, [user, profile, directConnections, mutualIdSet]);
+  }, [user, profile]);
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
@@ -527,7 +408,6 @@ export default function ProfileScreen() {
             </View>
           </TouchableWithoutFeedback>
         </Modal>
-        {/* Connections modal removed; connections shown inline in header */}
       </View>
     </TouchableWithoutFeedback>
   );
@@ -613,9 +493,6 @@ const styles = StyleSheet.create({
   ,saveProfileText: { color:'#34d399', fontWeight:'600', fontSize:15 }
   ,cancelProfileText: { color:'white', fontWeight:'600', fontSize:15 }
   ,cancelProfileBtn: { alignItems:'center', paddingVertical:10 }
-  ,connectionsTrigger: { }
-  ,connectionsTriggerText: { color:'#d1d5db', fontSize:13, fontWeight:'600' }
-  ,connectionsModalCard: { }
   ,locationToggleRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginTop:4, marginBottom:8 }
   ,locationToggleLabel: { color:'white', fontSize:14, fontWeight:'500' }
   ,locationBlock: { backgroundColor:'#151515', padding:12, borderRadius:12, borderWidth:1, borderColor:'#262626', marginBottom:12 }

@@ -6,9 +6,9 @@
 //  - Consider a Cloud Function to derive mutual matches
 import { auth, autoSignInIfNeeded, db, ensureAtLeastAnonymousAuth } from '@/constants/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Dimensions, PanResponder, PanResponderInstance, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Dimensions, PanResponder, PanResponderInstance, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // ----------------------------------------------------------------------------------
 // Graph View - Interactive Network Visualization
@@ -196,6 +196,58 @@ export default function ExploreBuilders() {
       });
     });
   };
+
+  // Handle removing a connection
+  const handleRemoveConnection = useCallback(async (connectionId: string) => {
+    if (!currentUserProfile) return;
+    
+    // Find the connection profile for the confirmation dialog
+    const connectionProfile = allProfiles.find(p => p.id === connectionId);
+    const connectionName = connectionProfile?.displayName || 'this connection';
+    
+    // Show confirmation alert
+    Alert.alert(
+      'Remove Connection',
+      `Are you sure you want to remove ${connectionName} from your connections?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const updatedLiked = (currentUserProfile.liked || []).filter(id => id !== connectionId);
+              
+              if (demoMode) {
+                // Demo mode: update local state only
+                setCurrentUserProfile(prev => prev ? {
+                  ...prev,
+                  liked: updatedLiked
+                } : null);
+                console.log(`[Demo] Removed connection: ${connectionId}`);
+              } else if (firebaseUser) {
+                // Firebase mode: update Firestore
+                const userRef = doc(db, 'users', firebaseUser.uid);
+                await updateDoc(userRef, {
+                  liked: updatedLiked
+                });
+                console.log(`[Firebase] Removed connection: ${connectionId}`);
+              }
+              
+              // Clear selection after removing connection
+              setSelectedNode(null);
+            } catch (error) {
+              console.error('Failed to remove connection:', error);
+              Alert.alert('Error', 'Failed to remove connection. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  }, [currentUserProfile, demoMode, firebaseUser, allProfiles]);
 
   // Auth state listener & optional auto sign-in (dev convenience)
   useEffect(() => {
@@ -660,7 +712,7 @@ export default function ExploreBuilders() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.splitLayoutContainer}>
+      <ScrollView style={styles.mainScrollView} showsVerticalScrollIndicator={false}>
         <Pressable style={styles.graphSection} onPress={resetAllNodes}>
           {renderGraph()}
           {lastRemoteError && (
@@ -684,18 +736,56 @@ export default function ExploreBuilders() {
         <View style={styles.detailsSection}>
           {(() => {
             if (!selectedNode) {
+              // Show direct connections list when no node is selected
+              if (graphData.first.length === 0) {
+                return (
+                  <View style={styles.noSelectionContainer}>
+                    <Text style={styles.noSelectionText}>No direct connections yet</Text>
+                    <Text style={styles.noSelectionSubText}>Connect with others to build your network</Text>
+                  </View>
+                );
+              }
+              
               return (
-                <View style={styles.noSelectionContainer}>
-                  <Text style={styles.noSelectionText}>Click on any node to see details</Text>
+                <View style={styles.connectionsContainer}>
+                  <Text style={styles.connectionsTitle}>Direct Connections ({graphData.first.length})</Text>
+                  <View style={styles.connectionsList}>
+                    {graphData.first.map((connection, index) => (
+                      <TouchableOpacity
+                        key={connection.id}
+                        style={styles.connectionItem}
+                        onPress={() => setSelectedNode(connection.id)}
+                      >
+                        <View style={styles.connectionInfo}>
+                          <Text style={styles.connectionName}>{connection.displayName || 'Unknown'}</Text>
+                          <Text style={styles.connectionIdea} numberOfLines={1}>{connection.ideaTitle || 'No project title'}</Text>
+                          {connection.interests && connection.interests.length > 0 && (
+                            <Text style={styles.connectionInterests} numberOfLines={1}>
+                              {connection.interests.slice(0, 3).join(' • ')}
+                            </Text>
+                          )}
+                        </View>
+                        <View style={styles.connectionNode}>
+                          <Text style={styles.connectionNodeText}>
+                            {(connection.email || connection.displayName || '?').trim()[0]?.toUpperCase() || '?'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
               );
             }
             
+            // Show individual node details when a node is selected
             const sel = selectedNode === 'ME' ? currentUserProfile : [...graphData.first, ...graphData.second].find(p => p.id === selectedNode);
             if (!sel) {
               return (
                 <View style={styles.noSelectionContainer}>
                   <Text style={styles.noSelectionText}>Node details not found</Text>
+                  <TouchableOpacity onPress={() => setSelectedNode(null)} style={styles.backButton}>
+                    <Text style={styles.backButtonText}>← Back to connections</Text>
+                  </TouchableOpacity>
                 </View>
               );
             }
@@ -706,35 +796,55 @@ export default function ExploreBuilders() {
             const ideaDescription = sel.ideaDescription || 'No project description';
             const interestsText = (sel.interests && sel.interests.length) ? sel.interests.slice(0,8).join(', ') : 'No interests listed';
             
+            // Check if this is a direct connection (in first ring)
+            const isDirectConnection = selectedNode !== 'ME' && graphData.first.some(p => p.id === selectedNode);
+            
             return (
               <View style={styles.nodeDetailsContainer}>
+                <TouchableOpacity onPress={() => setSelectedNode(null)} style={styles.backButton}>
+                  <Text style={styles.backButtonText}>← Back to connections</Text>
+                </TouchableOpacity>
                 <Text style={styles.detailsName}>{displayName}</Text>
+                <Text style={styles.detailsEmail}>{email}</Text>
                 <Text style={styles.detailsIdeaTitle}>{ideaTitle}</Text>
-                <Text style={styles.detailsIdeaDesc} numberOfLines={2}>{ideaDescription}</Text>
+                <Text style={styles.detailsIdeaDesc}>{ideaDescription}</Text>
                 <View style={styles.interestsContainer}>
                   <Text style={styles.interestsLabel}>Interests:</Text>
-                  <Text style={styles.interestsText} numberOfLines={2}>{interestsText}</Text>
+                  <Text style={styles.interestsText}>{interestsText}</Text>
                 </View>
+                {isDirectConnection && (
+                  <TouchableOpacity 
+                    onPress={() => handleRemoveConnection(selectedNode)}
+                    style={styles.removeConnectionButton}
+                  >
+                    <Text style={styles.removeConnectionButtonText}>Remove Connection</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             );
           })()}
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#0d0d0d' },
-  splitLayoutContainer: { flex: 1 },
-  graphSection: { flex: 0.7, backgroundColor:'#121212', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#1f2937' },
+  mainScrollView: { flex: 1 },
+  graphSection: { 
+    minHeight: 400,
+    backgroundColor:'#121212', 
+    borderBottomWidth: StyleSheet.hairlineWidth, 
+    borderBottomColor: '#1f2937' 
+  },
   detailsSection: { 
-    flex: 0.3, 
     backgroundColor: '#0d0d0d', 
     paddingHorizontal: 20, 
     paddingVertical: 16,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#1f2937'
+    borderTopColor: '#1f2937',
+    minHeight: 300,
   },
   noSelectionContainer: {
     flex: 1,
@@ -745,6 +855,91 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     fontSize: 14,
     fontStyle: 'italic'
+  },
+  noSelectionSubText: {
+    color: '#6b7280',
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginTop: 4
+  },
+  connectionsContainer: {
+    flex: 1,
+  },
+  connectionsTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#374151'
+  },
+  connectionsList: {
+    marginTop: 0,
+  },
+  connectionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1f2937',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  connectionInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  connectionName: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  connectionEmail: {
+    color: '#9ca3af',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  connectionIdea: {
+    color: '#34d399',
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  connectionInterests: {
+    color: '#d1d5db',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  connectionNode: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#6d5bbf',
+    borderWidth: 2,
+    borderColor: '#8b5fbf',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  connectionNodeText: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  nodeDetailsScrollView: {
+    flex: 1,
+  },
+  backButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+  },
+  backButtonText: {
+    color: '#60a5fa',
+    fontSize: 13,
+    fontWeight: '500',
   },
   nodeDetailsContainer: {
     flex: 1,
@@ -786,6 +981,19 @@ const styles = StyleSheet.create({
     color: '#d1d5db', 
     fontSize: 12, 
     lineHeight: 16
+  },
+  removeConnectionButton: {
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
+    alignItems: 'center'
+  },
+  removeConnectionButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600'
   },
   graphPlaceholder: {
     paddingHorizontal: 20,
