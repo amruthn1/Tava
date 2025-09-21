@@ -83,6 +83,8 @@ interface PostPin {
 
 interface UserProfileDoc {
   id: string;
+  displayName?: string;
+  email?: string;
   likedPosts?: string[];
 }
 
@@ -169,7 +171,12 @@ export default function MapScreen() {
     const unsub = onSnapshot(uq, snap => {
       const profiles: UserProfileDoc[] = snap.docs.map(d => {
         const data: any = d.data() || {};
-        return { id: d.id, likedPosts: Array.isArray(data.likedPosts) ? data.likedPosts : [] };
+        return { 
+          id: d.id, 
+          displayName: data.displayName || null,
+          email: data.email || null,
+          likedPosts: Array.isArray(data.likedPosts) ? data.likedPosts : [] 
+        };
       });
       setUserProfiles(profiles);
     });
@@ -399,7 +406,17 @@ export default function MapScreen() {
         <Pressable style={styles.detailOverlay} onPress={() => setSelectedPost(null)}>
           <Pressable style={styles.detailCard} onPress={(e) => { /* swallow */ }}>
             <ScrollView style={{ maxHeight: height * 0.6 }} contentContainerStyle={{ paddingBottom: 12 }}>
-              <Text style={styles.detailTitle}>{selectedPost?.title}</Text>
+              {(() => {
+                if (!selectedPost) return null;
+                const author = userProfiles.find(u => u.id === selectedPost.authorId);
+                const authorName = author?.displayName || author?.email || `User ${selectedPost.authorId.substring(0, 8)}`;
+                const projectName = selectedPost.title || 'Untitled Project';
+                return (
+                  <Text style={styles.detailTitle}>
+                    {authorName} is building {projectName}!
+                  </Text>
+                );
+              })()}
               {selectedPost?.createdAt && (
                 <Text style={styles.detailMeta}>{selectedPost.createdAt.toLocaleString()}</Text>
               )}

@@ -1,11 +1,12 @@
-import { db } from '@/constants/firebase';
+import { auth, db } from '@/constants/firebase';
 import { POSTS_COLLECTION, Post } from '@/types/post';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { User, onAuthStateChanged } from 'firebase/auth';
+import { arrayRemove, arrayUnion, collection, doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { OpenAI } from 'openai';
-import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, FlatList, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 interface UserLite { id: string; displayName?: string | null; email?: string | null; interests?: string[] }
 
@@ -18,6 +19,31 @@ export default function SearchProjects() {
   const [bestId, setBestId] = useState<string | null>(null);
   const [rankError, setRankError] = useState<string | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  
+  // Add authentication state
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(auth.currentUser);
+  const currentUserId = firebaseUser?.uid;
+  const [connectingUsers, setConnectingUsers] = useState<Set<string>>(new Set());
+  const [connectedUsers, setConnectedUsers] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, setFirebaseUser);
+    return () => unsub();
+  }, []);
+
+  // Track current user's connections
+  useEffect(() => {
+    if (!currentUserId) return;
+    
+    const unsub = onSnapshot(doc(db, 'users', currentUserId), snap => {
+      if (snap.exists()) {
+        const data: any = snap.data() || {};
+        const liked = Array.isArray(data.liked) ? data.liked : [];
+        setConnectedUsers(new Set(liked));
+      }
+    });
+    return () => unsub();
+  }, [currentUserId]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, POSTS_COLLECTION), snap => {
@@ -29,6 +55,10 @@ export default function SearchProjects() {
           title: String(data.title || ''),
           description: data.description ? String(data.description) : undefined,
           createdAt: typeof data.createdAt?.toMillis === 'function' ? data.createdAt.toMillis() : (data.createdAt ?? Date.now()),
+          personType: data.personType ? String(data.personType) : undefined,
+          skillsets: Array.isArray(data.skillsets) ? data.skillsets : undefined,
+          peopleNeeded: data.peopleNeeded ? Number(data.peopleNeeded) : undefined,
+          location: data.location || undefined,
         } as Post;
       });
       // newest first
@@ -224,19 +254,93 @@ export default function SearchProjects() {
     }
   };
 
-  const renderItem = ({ item }: { item: Post }) => {
-    const author = users[item.authorId];
+  const handleConnect = useCallback(async (authorId: string) => {
+    if (!currentUserId || !authorId || authorId === currentUserId) return;
+    
+    const isCurrentlyConnected = connectedUsers.has(authorId);
+    setConnectingUsers(prev => new Set(prev).add(authorId));
+    
+    try {
+      if (isCurrentlyConnected) {
+        // Disconnect: remove from liked array
+        await updateDoc(doc(db, 'users', currentUserId), { 
+          liked: arrayRemove(authorId) 
+        });
+        Alert.alert('Disconnected', 'You are no longer connected to this user.');
+      } else {
+        // Connect: add to liked array
+        await updateDoc(doc(db, 'users', currentUserId), { 
+          liked: arrayUnion(authorId) 
+        });
+        Alert.alert('Success', 'Connected! You can now see each other in your connections.');
+      }
+    } catch (e) {
+      const action = isCurrentlyConnected ? 'disconnect from' : 'connect to';
+      Alert.alert('Error', `Could not ${action} this user. Please try again.`);
+    } finally {
+      setConnectingUsers(prev => {
+        const next = new Set(prev);
+        next.delete(authorId);
+        return next;
+      });
+    }
+  }, [currentUserId, connectedUsers]);
+
+  const renderItem = ({ item: post }: { item: Post }) => {
+    const author = users[post.authorId];
+    const authorName = author?.displayName || 'Unknown Author';
+    
+    const date = new Date(post.createdAt);
+    const formattedDate = date.toLocaleDateString();
+
+    const skillsText = post.skillsets && post.skillsets.length > 0 
+      ? post.skillsets.join(' • ') 
+      : 'No specific skills required';
+
+    const personTypeText = post.personType || 'Any role';
+    const isConnecting = connectingUsers.has(post.authorId);
+    const isConnected = connectedUsers.has(post.authorId);
+    const canConnect = currentUserId && post.authorId !== currentUserId;
+
     return (
-      <TouchableOpacity activeOpacity={0.85} onPress={() => router.push((`/project/${item.id}`) as any)}>
-        <View style={styles.card}>
-          <Text style={styles.title} numberOfLines={2}>{item.title || 'Untitled Project'}</Text>
-          {!!author && (
-            <Text style={styles.author} numberOfLines={1}>{author.displayName || author.email || 'Builder'}</Text>
+      <TouchableOpacity style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardTitleSection}>
+            <Text style={styles.cardTitle}>{post.title}</Text>
+            <Text style={styles.cardAuthor}>by {authorName}</Text>
+          </View>
+          {canConnect && (
+            <TouchableOpacity 
+              style={[
+                styles.connectBtn, 
+                isConnected && styles.connectedBtn,
+                isConnecting && styles.connectBtnDisabled
+              ]}
+              onPress={() => handleConnect(post.authorId)}
+              disabled={isConnecting}
+            >
+              <Text style={[
+                styles.connectBtnText,
+                isConnected && styles.connectedBtnText
+              ]}>
+                {isConnecting ? (isConnected ? 'Disconnecting...' : 'Connecting...') : 
+                 isConnected ? '✓ Connected' : 'Connect'}
+              </Text>
+            </TouchableOpacity>
           )}
-          {!!item.description && (
-            <Text style={styles.desc} numberOfLines={3}>{item.description}</Text>
-          )}
-          <Text style={styles.meta}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+        </View>
+        <Text style={styles.cardDescription}>{post.description || 'No description available'}</Text>
+        <Text style={styles.cardDate}>Created: {formattedDate}</Text>
+        
+        <View style={styles.cardDetails}>
+          <View style={styles.skillsContainer}>
+            <Text style={styles.fieldLabel}>Skills Required:</Text>
+            <Text style={styles.fieldValue}>{skillsText}</Text>
+          </View>
+          <View style={styles.personTypeContainer}>
+            <Text style={styles.fieldLabel}>Looking for:</Text>
+            <Text style={styles.fieldValue}>{personTypeText}</Text>
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -328,6 +432,91 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     marginBottom: 12,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  cardTitleSection: {
+    flex: 1,
+    marginRight: 12,
+  },
+  cardTitle: { 
+    color: 'white', 
+    fontSize: 16, 
+    fontWeight: '700', 
+    marginBottom: 4 
+  },
+  cardAuthor: { 
+    color: '#9CA3AF', 
+    fontSize: 12 
+  },
+  connectBtn: {
+    backgroundColor: '#142a20',
+    borderWidth: 1,
+    borderColor: '#1f4736',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  connectedBtn: {
+    backgroundColor: '#1e3a5f',
+    borderColor: '#3b82f6',
+  },
+  connectBtnDisabled: {
+    backgroundColor: '#1a1a1a',
+    borderColor: '#333',
+  },
+  connectBtnText: {
+    color: '#34d399',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  connectedBtnText: {
+    color: '#60a5fa',
+  },
+  cardDescription: { 
+    color: '#d1d5db', 
+    fontSize: 13, 
+    lineHeight: 18, 
+    marginBottom: 8 
+  },
+  cardDate: { 
+    color: '#6b7280', 
+    fontSize: 11, 
+    marginBottom: 12 
+  },
+  cardDetails: {
+    gap: 8,
+  },
+  skillsContainer: {
+    backgroundColor: '#141414',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  personTypeContainer: {
+    backgroundColor: '#141414',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  fieldLabel: {
+    color: '#93c5fd',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  fieldValue: {
+    color: '#e5e7eb',
+    fontSize: 12,
+    lineHeight: 16,
   },
   title: { color: 'white', fontSize: 16, fontWeight: '700', marginBottom: 4 },
   author: { color: '#9CA3AF', fontSize: 12, marginBottom: 8 },

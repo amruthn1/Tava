@@ -4,7 +4,14 @@ export interface Post {
   title: string;
   description?: string;
   createdAt: number; // epoch ms for easier ordering client-side
-  // future: tags, skillsNeeded, stage, attachments
+  location?: {
+    latitude: number;
+    longitude: number;
+    label?: string;
+  };
+  personType?: string; // builder, mentor, etc.
+  peopleNeeded?: number;
+  skillsets?: string[];
 }
 
 // Firestore collection name constant
