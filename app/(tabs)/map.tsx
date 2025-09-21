@@ -323,13 +323,11 @@ export default function MapScreen() {
                 selected={selectedAnnotationId === event.id}
               >
                 <View style={styles.pinHitContainer} pointerEvents="box-none">
-                  {/* Single-tap selection handled by PointAnnotation onSelected; expanded visual wrapper enlarges hit area */}
                   <View style={styles.pinTouchWrapper} pointerEvents="box-none">
                     <View style={styles.pinSquareHit} />
                     <Pin size={44} color={pinColor} outline="#ffffff" />
                   </View>
                 </View>
-                {/* Placeholder removed Mapbox.Callout; custom overlay rendered absolutely */}
               </Mapbox.PointAnnotation>
             );
           })}
@@ -373,7 +371,6 @@ export default function MapScreen() {
                     <Pin size={42} color={'#8E44AD'} outline="#ffffff" />
                   </View>
                 </View>
-                {/* Placeholder removed Mapbox.Callout */}
               </Mapbox.PointAnnotation>
             );
           })}

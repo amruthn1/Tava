@@ -320,39 +320,38 @@ export default function ProfileScreen() {
     return (
       <View style={styles.headerWrapper}>
         {/* 1. PROFILE SECTION (name, email, links, sign out) */}
-        {user && (
-          <TouchableOpacity style={styles.signOutTopRight} onPress={handleSignOut} accessibilityLabel="Sign out">
-            <Text style={styles.signOutTopRightText}>Sign Out</Text>
-          </TouchableOpacity>
-        )}
         <View style={styles.topRow}>
           <View style={{ flex:1 }}>
             <Text style={styles.screenTitle}>{profile?.displayName || user?.email || 'Your Profile'}</Text>
             {(profile?.email || user?.email) && (
               <Text style={styles.userMetaLine}>{profile?.email || user?.email}</Text>
             )}
+            {/* Interests and links above edit button */}
+            {(profile?.interests?.length || profile?.linkedinUrl || profile?.websiteUrl) && (
+              <View style={[styles.chipsRow, { marginTop: 8 }]}>
+                {!!profile?.interests?.length && (
+                  <View style={styles.chip}><Text style={styles.chipText}>{profile.interests.slice(0,4).join(' · ')}{profile.interests.length>4?'…':''}</Text></View>
+                )}
+                {!!profile?.linkedinUrl && (
+                  <Pressable onPress={() => { try { Linking.openURL(profile.linkedinUrl!); } catch {} }} style={styles.chip}><Text style={styles.chipText}>LinkedIn</Text></Pressable>
+                )}
+                {!!profile?.websiteUrl && (
+                  <Pressable onPress={() => { try { Linking.openURL(profile.websiteUrl!); } catch {} }} style={styles.chip}><Text style={styles.chipText}>Website</Text></Pressable>
+                )}
+              </View>
+            )}
             {user && (
-              <View style={[styles.actionsRow,{ marginTop:8, marginBottom:0 }]}>              
+              <View style={[styles.actionsRow, { marginTop: (profile?.interests?.length || profile?.linkedinUrl || profile?.websiteUrl) ? 12 : 8, marginBottom:0, justifyContent: 'space-between' }]}>              
                 <TouchableOpacity style={[styles.smallAction, styles.editAction]} onPress={() => setShowEditProfile(true)}>
                   <Text style={styles.smallActionText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.smallAction, styles.signOutAction]} onPress={handleSignOut} accessibilityLabel="Sign out">
+                  <Text style={styles.signOutActionText}>Sign Out</Text>
                 </TouchableOpacity>
               </View>
             )}
           </View>
         </View>
-        {(profile?.interests?.length || profile?.linkedinUrl || profile?.websiteUrl) ? (
-          <View style={styles.chipsRow}>
-            {!!profile?.interests?.length && (
-              <View style={styles.chip}><Text style={styles.chipText}>{profile.interests.slice(0,4).join(' · ')}{profile.interests.length>4?'…':''}</Text></View>
-            )}
-            {!!profile?.linkedinUrl && (
-              <Pressable onPress={() => { try { Linking.openURL(profile.linkedinUrl!); } catch {} }} style={styles.chip}><Text style={styles.chipText}>LinkedIn</Text></Pressable>
-            )}
-            {!!profile?.websiteUrl && (
-              <Pressable onPress={() => { try { Linking.openURL(profile.websiteUrl!); } catch {} }} style={styles.chip}><Text style={styles.chipText}>Website</Text></Pressable>
-            )}
-          </View>
-        ) : null}
         {profile?.bio && (
           <View style={styles.sectionCard}><Text style={styles.sectionBody}>{profile.bio}</Text></View>
         )}
@@ -569,7 +568,7 @@ const styles = StyleSheet.create({
   signOutBtn: { backgroundColor:'#b91c1c' },
   bottomBtnText: { color:'white', fontWeight:'600', fontSize:14 },
   modalCardWrapper: { width:'100%' },
-  modalOverlay: { flex:1, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'flex-end', padding:20 },
+  modalOverlay: { flex:1, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'flex-end', padding:20, paddingBottom: 30  },
   modalCard: { backgroundColor:'#1e1e1e', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#333' },
   modalHeaderRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:12 },
   modalTitle: { color:'white', fontSize:18, fontWeight:'600' },
@@ -610,7 +609,7 @@ const styles = StyleSheet.create({
   ,signOutFloatingText: { color:'white', fontSize:13, fontWeight:'600' }
   ,editModalCard: { backgroundColor:'#1b1b1b', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#2a2a2a', maxHeight:'85%' }
   ,smallLabel: { color:'#d1d5db', fontSize:11, fontWeight:'600', marginBottom:6 }
-  ,saveProfileBtn: { backgroundColor:'#142a20', borderWidth:1, borderColor:'#1f4736', paddingVertical:14, borderRadius:12, alignItems:'center', marginTop:20 }
+  ,saveProfileBtn: { backgroundColor:'#142a20', borderWidth:1, borderColor:'#1f4736', paddingVertical:14, borderRadius:12, alignItems:'center' }
   ,saveProfileText: { color:'#34d399', fontWeight:'600', fontSize:15 }
   ,cancelProfileText: { color:'white', fontWeight:'600', fontSize:15 }
   ,cancelProfileBtn: { alignItems:'center', paddingVertical:10 }
@@ -627,9 +626,11 @@ const styles = StyleSheet.create({
   ,locationError: { color:'#f87171', marginTop:8, fontSize:12 }
   ,locationPreview: { color:'#9ca3af', marginTop:6, fontSize:12 }
   // New inline layout styles
-  ,signOutTopRight: { position:'absolute', top:60, right:0, backgroundColor:'#2a1a1a', borderWidth:1, borderColor:'#442222', paddingHorizontal:16, paddingVertical:10, borderRadius:30, zIndex:10 }
+  ,signOutTopRight: { position:'absolute', top:130, right:0, backgroundColor:'#2a1a1a', borderWidth:1, borderColor:'#442222', paddingHorizontal:16, paddingVertical:10, borderRadius:30, zIndex:10 }
   ,signOutTopRightText: { color:'#f87171', fontWeight:'600', fontSize:13 }
   ,editAction: { backgroundColor:'#1e293b', borderColor:'#334155' }
+  ,signOutAction: { backgroundColor:'#2a1a1a', borderColor:'#442222' }
+  ,signOutActionText: { color:'#f87171', fontSize:12, fontWeight:'600' }
   ,createInlineRow: { flexDirection:'row', alignItems:'center', marginTop:12, marginBottom:12 }
   ,createInlineButton: { backgroundColor:'#142a20', borderWidth:1, borderColor:'#1f4736', paddingHorizontal:40, paddingVertical:14, borderRadius:40, flex:1 }
   ,createInlineButtonText: { color:'#34d399', fontWeight:'600', fontSize:14, textAlign:'center' }

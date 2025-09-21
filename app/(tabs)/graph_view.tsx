@@ -6,12 +6,12 @@
 //  - Consider a Cloud Function to derive mutual matches
 import { auth, autoSignInIfNeeded, db, ensureAtLeastAnonymousAuth } from '@/constants/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { arrayUnion, collection, doc, getDoc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Dimensions, PanResponder, PanResponderInstance, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // ----------------------------------------------------------------------------------
-// Builder / Idea Card Swipe MVP (replaces old events explore)
+// Graph View - Interactive Network Visualization
 // ----------------------------------------------------------------------------------
 
 interface BuilderProfile {
@@ -28,17 +28,7 @@ interface BuilderProfile {
   interests?: string[]; // added for popup summary
 }
 
-// Post model (MVP)
-// (Removed Post model for simplified profile-only swipe phase)
-
-const SCREEN = Dimensions.get('window');
-// Removed fixed CARD_AREA_HEIGHT – deck/post area will flex to fill available space beneath graph and above action bar
-const CARD_AREA_HEIGHT = SCREEN.height * 0.6; // (legacy) retained only if referenced elsewhere
 const LOCAL_USER_ID = 'local-current-user'; // Stable identifier so effects do not loop
-// Lower threshold so lighter drags dismiss; use velocity fallback as well.
-// (Swipe disabled in fallback mode; keeping constants commented for future restore)
-// const SWIPE_THRESHOLD = SCREEN.width * 0.18;
-// const SWIPE_VELOCITY_MIN = 600;
 
 // ----------------------------------------------------------------------------------
 // Reusable dummy seed data (so we can perform an in-app reset without reload)
@@ -57,31 +47,9 @@ const INITIAL_PROFILES: BuilderProfile[] = [
   { id: 'demo-user-10', displayName: 'Jules', email:'jules@example.com', interests:['Async','Standup','Summaries'], ideaTitle: 'Async Standup Synth', ideaDescription: 'Summarizes updates & flags blockers.', liked: [] }
 ];
 
-// (Removed INITIAL_POSTS list)
-
-interface PostItem { id: string; title: string; description?: string | null; authorId: string; authorName?: string; createdAt?: number; }
-
-// Simple static card (no gestures)
-function ProfileCard({ profile, post }: { profile?: BuilderProfile; post?: PostItem }) {
-  return (
-    <View style={styles.card}>
-      <View style={styles.cardInner}>        
-        <Text style={styles.ideaTitle}>{post ? (post.title || 'Untitled Project') : (profile?.ideaTitle || 'Untitled Idea')}</Text>
-        <Text style={styles.author}>{post ? (post.authorName || 'Anonymous Builder') : (profile?.displayName || 'Anonymous Builder')}</Text>
-        <Text style={styles.description} numberOfLines={8}>
-          {post ? (post.description || 'No description provided.') : (profile?.ideaDescription || 'No description provided yet.')}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 export default function ExploreBuilders() {
   const [currentUserProfile, setCurrentUserProfile] = useState<BuilderProfile | null>(null);
   const [allProfiles, setAllProfiles] = useState<BuilderProfile[]>([]);
-  const [posts, setPosts] = useState<PostItem[]>([]);
-  const [deck, setDeck] = useState<PostItem[]>([]);
-  const [index, setIndex] = useState(0); // pointer into deck
   const [remoteDisabled, setRemoteDisabled] = useState(false); // toggled if permission denied
   const [lastRemoteError, setLastRemoteError] = useState<string | null>(null);
   const [permissionDiagnosis, setPermissionDiagnosis] = useState<string | null>(null); // human-friendly classification
@@ -337,143 +305,19 @@ export default function ExploreBuilders() {
   // Posts subscription (independent). If permission denied we still continue with demo user data only.
   useEffect(() => {
     if (!firebaseUser || remoteDisabled) return;
-    const unsub = onSnapshot(
-      collection(db, 'posts'),
-      snap => {
-        const items: PostItem[] = snap.docs.map(d => {
-          const data: any = d.data() || {};
-          return {
-            id: d.id,
-            title: data.title,
-            description: data.description,
-            authorId: data.authorId,
-            createdAt: data.createdAt?.toMillis?.() || Date.now()
-          };
-        });
-        setPosts(items);
-      },
-      err => {
-        console.warn('[Explore] posts listener error', err);
-      }
-    );
-    return () => unsub();
+    // Posts functionality removed - graph view only
   }, [firebaseUser, remoteDisabled]);
 
-  // (Removed remote posts seeding – handled in local initialize above)
-
-  // Subscribe to all user profiles (MVP: no pagination)
-  // (Removed Firestore subscriptions in local dummy mode)
-
-  // Subscribe to posts
-  // (Removed Firestore subscriptions in local dummy mode)
-
-  // Derive current user profile (if signed in) and build deck from posts.
+  // Derive current user profile
   useEffect(() => {
     const me = allProfiles.find(p => p.id === currentUserId) || null;
     setCurrentUserProfile(me || null);
-    const currentId = deck[index]?.id;
-    let newDeck: PostItem[] = [];
-    if (!me) {
-      const filtered = posts.filter(p => p.authorId !== currentUserId);
-      newDeck = filtered.map(p => ({ ...p, authorName: allProfiles.find(u => u.id === p.authorId)?.displayName }));
-    } else {
-      const passed = new Set(me.passedPosts || []);
-      const likedPosts = new Set(me.likedPosts || []);
-      const filtered = posts.filter(p => p.authorId !== me.id && !passed.has(p.id) && !likedPosts.has(p.id));
-      newDeck = filtered.map(p => ({ ...p, authorName: allProfiles.find(u => u.id === p.authorId)?.displayName }));
-    }
-    // Sort newest first within each author group first
-    newDeck.sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
-    // Fairness: if one author has many posts, interleave authors (simple round-robin)
-    if (newDeck.length > 3) {
-      const byAuthor: Record<string, PostItem[]> = {};
-      newDeck.forEach(p => { (byAuthor[p.authorId] = byAuthor[p.authorId] || []).push(p); });
-      Object.values(byAuthor).forEach(arr => arr.sort((a,b) => (b.createdAt||0) - (a.createdAt||0)));
-      const authors = Object.keys(byAuthor).sort();
-      const interleaved: PostItem[] = [];
-      let added = true; let cursor = 0;
-      while (added) {
-        added = false;
-        for (let i = 0; i < authors.length; i++) {
-          const aid = authors[(i + cursor) % authors.length];
-            const bucket = byAuthor[aid];
-            if (bucket.length) {
-              interleaved.push(bucket.shift()!);
-              added = true;
-            }
-        }
-        cursor++;
-      }
-      // Keep original order if interleaving produced same length
-      if (interleaved.length === newDeck.length) {
-        newDeck = interleaved;
-      }
-    }
-    const prevIds = deck.map(p => p.id).join(',');
-    const newIds = newDeck.map(p => p.id).join(',');
-    if (prevIds !== newIds) {
-      // Adjust index intelligently
-      if (currentId) {
-        const stillPos = newDeck.findIndex(p => p.id === currentId);
-        if (stillPos === -1) {
-          // Current removed (liked/passed) – keep same numeric index so next card slides in
-          if (index >= newDeck.length) {
-            setIndex(0);
-          }
-        } else if (stillPos !== index) {
-          setIndex(stillPos);
-        }
-      } else if (index >= newDeck.length && newDeck.length > 0) {
-        setIndex(0);
-      }
-      setDeck(newDeck);
-    } else if (index >= newDeck.length && newDeck.length > 0) {
-      setIndex(0);
-    }
-  }, [allProfiles, currentUserId, posts, deck, index]);
+  }, [allProfiles, currentUserId]);
 
-  const advance = useCallback(() => {
-    setIndex(prev => prev + 1);
-  }, []);
-
-  const handleLike = useCallback(async (postId: string) => {
-    if (demoMode) {
-      setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])) } : p));
-      advance();
-      return;
-    }
-    setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, likedPosts: Array.from(new Set([...(p.likedPosts||[]), postId])) } : p));
-    advance();
-    // Firestore write (will be no-op until auth fallback replaced with real user id)
-    try {
-      await updateDoc(doc(db, 'users', currentUserId), { likedPosts: arrayUnion(postId) });
-    } catch (e) {
-      console.warn('Failed to persist like; will resync on next snapshot', e);
-      // (Optional) Could implement rollback or refresh logic here.
-    }
-  }, [currentUserId, advance, demoMode]);
-
-  const handlePass = useCallback(() => {
-    const current = deck[index];
-    if (current) {
-      if (demoMode) {
-        setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, passedPosts: Array.from(new Set([...(p.passedPosts||[]), current.id])) } : p));
-      } else {
-        // optimistic
-        setAllProfiles(prev => prev.map(p => p.id === currentUserId ? { ...p, passedPosts: Array.from(new Set([...(p.passedPosts||[]), current.id])) } : p));
-        updateDoc(doc(db, 'users', currentUserId), { passedPosts: arrayUnion(current.id) }).catch(e => console.warn('Failed pass write', e));
-      }
-    }
-    advance();
-  }, [advance, deck, index, currentUserId, demoMode]);
-
-  // Reset demo: restore original dummy profiles & posts and clear likes
   const resetDemo = useCallback(() => {
     const localUser: BuilderProfile = { id: LOCAL_USER_ID, displayName: 'You', email: 'you@example.com', ideaTitle: 'Your Idea TBD', ideaDescription: 'Add your profile later.', liked: [] };
     setAllProfiles([localUser, ...INITIAL_PROFILES]);
-    setDeck([]);
     setCurrentUserProfile(localUser);
-    setIndex(0);
   }, []);
 
   // Placeholder graph nodes (will be replaced in next step)
@@ -536,7 +380,9 @@ export default function ExploreBuilders() {
   const windowHeight = windowDims.height;
   const rawCanvasSize = Math.ceil(largestR * 2 + nodeDiameter + 8);
   const maxSizeByWidth = windowWidth - 32;
-  const maxSizeByHeight = Math.max(140, Math.floor(windowHeight * 0.65 - 56));
+  // Since graph section is 60% of screen, use more of that available space
+  const graphSectionHeight = windowHeight * 0.6; // 60% of screen for graph section
+  const maxSizeByHeight = Math.max(200, Math.floor(graphSectionHeight - 80)); // Leave space for meta text and padding
   const maxAllowed = Math.min(MAX_SIZE, maxSizeByWidth, maxSizeByHeight);
   let scale = 1;
   if (rawCanvasSize > maxAllowed) {
@@ -737,20 +583,6 @@ export default function ExploreBuilders() {
       <View style={styles.graphWrapper}>
   <Pressable style={[styles.graphCanvas,{ width: size, height: size }]} onPress={resetAllNodes}>
           {renderEdges()}
-          {/* Selected node info popup */}
-          {(() => {
-            if (!selectedNode) return null;
-            const sel = selectedNode === 'ME' ? currentUserProfile : [...first, ...secondRingNodes, ...thirdRingNodes].find(p => p.id === selectedNode);
-            if (!sel) return null;
-            const email = sel.email || 'Unknown email';
-            const interestsText = (sel.interests && sel.interests.length) ? sel.interests.slice(0,5).join(', ') : 'No interests listed';
-            return (
-              <View pointerEvents="none" style={styles.nodeInfoPopup}>
-                <Text style={styles.nodeInfoEmail} numberOfLines={1}>{email}</Text>
-                <Text style={styles.nodeInfoInterests} numberOfLines={2}>{interestsText}</Text>
-              </View>
-            );
-          })()}
           {/* Center node */}
           {(() => {
             const home = pinned['ME'] ? pinned['ME'] : homePositions['ME'];
@@ -816,9 +648,6 @@ export default function ExploreBuilders() {
           })}
         </Pressable>
   <Text style={styles.graphMeta}>{first.length} direct • {second.length} extended</Text>
-        {first.length === 0 && (
-          <Text style={styles.graphHint}>Swipe right to start building your graph.</Text>
-        )}
         {demoMode && (
           <TouchableOpacity accessibilityLabel="Reset demo network" onPress={resetDemo} style={styles.resetButton}>
             <Text style={styles.resetButtonText}>Reset Demo</Text>
@@ -830,7 +659,7 @@ export default function ExploreBuilders() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.splitContainer}>
+      <View style={styles.splitLayoutContainer}>
         <Pressable style={styles.graphSection} onPress={resetAllNodes}>
           {renderGraph()}
           {lastRemoteError && (
@@ -849,59 +678,46 @@ export default function ExploreBuilders() {
             </View>
           )}
         </Pressable>
-        <View style={styles.postsSection}>
-          <Pressable style={{ flex:1 }} onPress={resetAllNodes}>
-            <View style={styles.postsInner}>
-              {currentUserProfile && !allProfiles.find(p => p.id === currentUserProfile.id && (p.likedPosts || p.liked || p.ideaTitle !== undefined)) && (
-                <View style={styles.onboardingBannerCompact}>
-                  <Text style={styles.onboardingTitle}>Welcome!</Text>
-                  <Text style={styles.onboardingBody}>Create a post so others can discover your project.</Text>
+        
+        {/* Node Details Section */}
+        <View style={styles.detailsSection}>
+          {(() => {
+            if (!selectedNode) {
+              return (
+                <View style={styles.noSelectionContainer}>
+                  <Text style={styles.noSelectionText}>Click on any node to see details</Text>
                 </View>
-              )}
-              {deck.length === 0 && (
-                <View style={styles.emptyDeck}>            
-                  <Text style={styles.emptyDeckText}>No profiles available.</Text>
-                  {demoMode && (
-                    <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
-                      <Text style={styles.inlineResetText}>Reset Demo</Text>
-                    </TouchableOpacity>
-                  )}
-                  {remoteDisabled && (
-                    <View style={{ marginTop: 12 }}>
-                      <Text style={{ color: '#f87171', fontSize: 12, textAlign: 'center' }}>Remote disabled.</Text>
-                    </View>
-                  )}
+              );
+            }
+            
+            const sel = selectedNode === 'ME' ? currentUserProfile : [...graphData.first, ...graphData.second].find(p => p.id === selectedNode);
+            if (!sel) {
+              return (
+                <View style={styles.noSelectionContainer}>
+                  <Text style={styles.noSelectionText}>Node details not found</Text>
                 </View>
-              )}
-              {deck.length > 0 && index >= deck.length && (
-                <View style={styles.emptyDeck}>            
-                  <Text style={styles.emptyDeckText}>No more profiles.</Text>
-                  {demoMode && (
-                    <TouchableOpacity onPress={resetDemo} accessibilityLabel="Reset demo profiles" style={styles.inlineReset}>
-                      <Text style={styles.inlineResetText}>Start Over</Text>
-                    </TouchableOpacity>
-                  )}
+              );
+            }
+            
+            const displayName = sel.displayName || 'Unknown';
+            const email = sel.email || 'Unknown email';
+            const ideaTitle = sel.ideaTitle || 'No project title';
+            const ideaDescription = sel.ideaDescription || 'No project description';
+            const interestsText = (sel.interests && sel.interests.length) ? sel.interests.slice(0,8).join(', ') : 'No interests listed';
+            
+            return (
+              <View style={styles.nodeDetailsContainer}>
+                <Text style={styles.detailsName}>{displayName}</Text>
+                <Text style={styles.detailsEmail}>{email}</Text>
+                <Text style={styles.detailsIdeaTitle}>{ideaTitle}</Text>
+                <Text style={styles.detailsIdeaDesc} numberOfLines={2}>{ideaDescription}</Text>
+                <View style={styles.interestsContainer}>
+                  <Text style={styles.interestsLabel}>Interests:</Text>
+                  <Text style={styles.interestsText} numberOfLines={2}>{interestsText}</Text>
                 </View>
-              )}
-              {deck.length > 0 && index < deck.length && (
-                <>
-                  <ProfileCard post={deck[index]} />
-                  <View style={styles.inlineActionsRow}>
-                    <TouchableOpacity accessibilityLabel="Pass on this builder" style={[styles.rowActionPill, styles.passPill]} onPress={handlePass}>
-                      <Text style={styles.passActionText}>Pass</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      disabled={demoMode}
-                      accessibilityLabel={demoMode ? 'Connect disabled in demo mode' : 'Connect with this builder'}
-                      style={[styles.rowActionPill, styles.connectPill, demoMode && { opacity: 0.4 }]}
-                      onPress={() => handleLike(deck[index].id)}>
-                      <Text style={styles.likeActionText}>{demoMode ? 'Connect (Auth Required)' : 'Connect'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </>
-              )}
-            </View>
-          </Pressable>
+              </View>
+            );
+          })()}
         </View>
       </View>
     </SafeAreaView>
@@ -910,11 +726,67 @@ export default function ExploreBuilders() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#0d0d0d' },
-  splitContainer: { flex:1 },
-  graphSection: { flex:0.65, backgroundColor:'#121212', borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#1f2937', justifyContent:'center' },
-  postsSection: { flex:0.35, backgroundColor:'#0d0d0d' },
-  postsInner: { flex:1, paddingHorizontal:20, paddingTop:12, paddingBottom:8 },
-  onboardingBannerCompact: { backgroundColor:'#1e293b', padding:10, borderRadius:14, borderWidth:1, borderColor:'#334155', marginBottom:10 },
+  splitLayoutContainer: { flex: 1 },
+  graphSection: { flex: 0.4, backgroundColor:'#121212', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#1f2937' },
+  detailsSection: { 
+    flex: 0.6, 
+    backgroundColor: '#0d0d0d', 
+    paddingHorizontal: 20, 
+    paddingVertical: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#1f2937'
+  },
+  noSelectionContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noSelectionText: {
+    color: '#9ca3af',
+    fontSize: 14,
+    fontStyle: 'italic'
+  },
+  nodeDetailsContainer: {
+    flex: 1,
+  },
+  detailsName: { 
+    color: '#fff', 
+    fontSize: 18, 
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  detailsEmail: { 
+    color: '#9ca3af', 
+    fontSize: 13, 
+    fontWeight: '500',
+    marginBottom: 8
+  },
+  detailsIdeaTitle: { 
+    color: '#34d399', 
+    fontSize: 15, 
+    fontWeight: '600',
+    marginBottom: 4
+  },
+  detailsIdeaDesc: { 
+    color: '#cbd5e1', 
+    fontSize: 13, 
+    lineHeight: 18,
+    marginBottom: 12
+  },
+  interestsContainer: {
+    marginTop: 4
+  },
+  interestsLabel: { 
+    color: '#6b7280', 
+    fontSize: 12, 
+    fontWeight: '600',
+    marginBottom: 4
+  },
+  interestsText: { 
+    color: '#d1d5db', 
+    fontSize: 12, 
+    lineHeight: 16
+  },
   graphPlaceholder: {
     paddingHorizontal: 20,
     paddingTop: 12,
@@ -924,33 +796,16 @@ const styles = StyleSheet.create({
     borderBottomColor: '#222'
   },
   graphWrapper: {
-    paddingTop: 12,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#121212',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#222',
-    paddingBottom: 12
+    paddingVertical: 8,
   },
   graphCanvas: {
     position: 'relative',
     marginBottom: 8,
   },
-  nodeInfoPopup: {
-    position:'absolute',
-    top:8,
-    right:8,
-    backgroundColor:'rgba(17,24,39,0.92)',
-    borderWidth:1,
-    borderColor:'#30363d',
-    borderRadius:10,
-    paddingVertical:8,
-    paddingHorizontal:10,
-    maxWidth:200,
-    gap:4
-  },
-  nodeInfoEmail: { color:'#fff', fontSize:12, fontWeight:'600' },
-  nodeInfoInterests: { color:'#cbd5e1', fontSize:11, lineHeight:15 },
   edgeLineBase: {
     position: 'absolute',
     height: 1,
@@ -1019,81 +874,10 @@ nodeSecond: {
   nodeLabelSmall: { color: 'white', fontWeight: '600', fontSize: 12 },
   graphMeta: { color: '#888', fontSize: 12 },
   graphHint: { color: '#666', fontSize: 12, marginTop: 4 },
-  graphTitle: { color: 'white', fontSize: 18, fontWeight: '600' },
-  graphSubtitle: { color: '#aaa', marginTop: 4, fontSize: 13 },
-  deckArea: { height: CARD_AREA_HEIGHT, width: '100%', alignItems: 'center', justifyContent: 'center', position: 'relative' }, // legacy style (unused for new flex layout)
-  flexDeckWrapper: { flex: 1, width: '100%', position: 'relative' },
-  flexCardRegion: { flex: 1, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
-  emptyDeck: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  emptyDeckText: { color: '#aaa', fontSize: 16, textAlign: 'center' },
+  resetButton: { marginTop: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155' },
+  resetButtonText: { color: '#3b82f6', fontSize: 12, fontWeight: '600' },
   inlineReset: { marginTop: 14, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18, backgroundColor: '#1f2937', borderWidth: 1, borderColor: '#334155' },
   inlineResetText: { color: '#60a5fa', fontSize: 13, fontWeight: '500' },
-  cardContainer: { position: 'absolute', width: SCREEN.width * 0.9, height: '100%' },
-  card: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#333',
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    maxHeight: '75%', // ensure space for bottom bar
-  },
-  cardInner: { flexGrow: 1 },
-  ideaTitle: { fontSize: 20, fontWeight: '700', color: 'white', marginBottom: 6 },
-  author: { fontSize: 14, fontWeight: '500', color: '#bbb', marginBottom: 12 },
-  description: { fontSize: 14, color: '#ddd', lineHeight: 20 },
-  likeBadge: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 2,
-    borderColor: '#34d399',
-    borderRadius: 8,
-    transform: [{ rotate: '-12deg' }]
-  },
-  likeText: { color: '#34d399', fontWeight: '700', letterSpacing: 1 },
-  passBadge: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 2,
-    borderColor: '#f87171',
-    borderRadius: 8,
-    transform: [{ rotate: '12deg' }]
-  },
-  passText: { color: '#f87171', fontWeight: '700', letterSpacing: 1 },
-  footerActions: { flexDirection: 'row', justifyContent: 'center', paddingVertical: 18, gap: 28, zIndex: 50 },
-  actionButton: {
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    borderRadius: 40,
-    minWidth: 120,
-    alignItems: 'center'
-  },
-  passButton: { backgroundColor: '#2a1a1a', borderWidth: 1, borderColor: '#442222' },
-  likeButton: { backgroundColor: '#142a20', borderWidth: 1, borderColor: '#1f4736' },
-  passActionText: { color: '#f87171', fontWeight: '600', fontSize: 15 },
-  likeActionText: { color: '#34d399', fontWeight: '600', fontSize: 15 }
-  ,resetButton: { marginTop: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155' },
-  resetButtonText: { color: '#3b82f6', fontSize: 12, fontWeight: '600' }
-  ,actionsOverlay: { position: 'absolute', bottom: 24, right: 20, flexDirection: 'column', alignItems: 'flex-end', gap: 12 },
-  smallActionButton: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 30, minWidth: 100, alignItems: 'center' },
-  // (Removed bottomActionBar/actionPill; replaced by inlineActionsRow under card)
-  inlineActionsRow: { flexDirection: 'row', marginTop: 16, gap: 16 },
-  rowActionPill: { flex: 1, alignItems: 'center', paddingVertical: 14, borderRadius: 40 },
-  passPill: { backgroundColor: '#2a1a1a', borderWidth: 1, borderColor: '#442222' },
-  connectPill: { backgroundColor: '#142a20', borderWidth: 1, borderColor: '#1f4736' },
-  bottomBarEmptyText: { color: '#555', fontSize: 13, textAlign: 'center', flex: 1, paddingVertical: 6 }, // legacy
-  onboardingBanner: { position:'absolute', top:0, left:0, right:0, backgroundColor:'#1e293b', padding:12, borderRadius:16, borderWidth:1, borderColor:'#334155', zIndex:10 },
-  onboardingTitle: { color:'#93c5fd', fontSize:12, fontWeight:'700', marginBottom:4 },
-  onboardingBody: { color:'#cbd5e1', fontSize:12, lineHeight:16 },
   remoteErrorBanner: { position:'absolute', top: 8, left: 0, right: 0, alignItems:'center' },
   remoteErrorText: { color:'#f87171', fontSize:12 },
   remoteDiagnosisText: { color:'#fda4af', fontSize:11, marginTop:4, paddingHorizontal:12, textAlign:'center' }
