@@ -89,6 +89,9 @@ export default function ExploreBuilders() {
   const currentUserId = firebaseUser ? firebaseUser.uid : LOCAL_USER_ID;
   // Deck now directly uses profiles instead of posts
   const [initialized, setInitialized] = useState(false);
+  const [graphExpanded, setGraphExpanded] = useState(false);
+  // Graph interaction: selected node id ("ME" denotes current user) for highlight context
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
   // Auth state listener & optional auto sign-in (dev convenience)
   useEffect(() => {
@@ -356,10 +359,10 @@ export default function ExploreBuilders() {
     const second = graphData.second;
 
     // Parameters
-    const MIN_ARC_GAP = 14; // px minimal spacing between node centers along a ring
-    const RING_PADDING = 38; // distance between rings
-    const BASE_RADIUS = 46; // radius for first ring if few nodes
-    const MAX_SIZE = 300; // cap canvas size for performance
+  const MIN_ARC_GAP = 18; // allow more spacing since nodes are smaller now
+  const RING_PADDING = graphExpanded ? 80 : 46; // more distance -> longer edges when expanded
+  const BASE_RADIUS = graphExpanded ? 90 : 54; // start further out in expanded view
+  const MAX_SIZE = graphExpanded ? 520 : 320; // allow larger canvas when expanded
 
     // Compute required radius for a given node count so arc length >= MIN_ARC_GAP
     const radiusFor = (count: number, base: number) => {
@@ -389,7 +392,7 @@ export default function ExploreBuilders() {
 
     // Final canvas size (diameter of largest ring + node diameter margin)
     const largestR = thirdRingNodes.length ? r3 : (secondRingNodes.length ? r2 : r1);
-    const nodeDiameter = 40; // approx max
+  const nodeDiameter = graphExpanded ? 28 : 34; // smaller nodes
     const size = Math.min(MAX_SIZE, Math.ceil(largestR * 2 + nodeDiameter + 12));
     const center = size / 2;
 
@@ -400,38 +403,69 @@ export default function ExploreBuilders() {
         return { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) };
       });
     };
-    const firstPos = place(first.length, r1);
-    const secondPos = place(secondRingNodes.length, r2, -Math.PI / 2 + Math.PI / (secondRingNodes.length || 1)); // slight phase shift
-    const thirdPos = place(thirdRingNodes.length, r3, -Math.PI / 2 + Math.PI / (thirdRingNodes.length || 1));
+    // Asymmetric weighting: angle slots allocated proportional to descendant counts to reduce symmetry.
+    const weightCounts = (nodes: BuilderProfile[]) => nodes.map(n => {
+      const children = second.filter(s => (n.likedPosts||[]).includes(s.id)).length;
+      return 1 + children; // base weight 1 + child count
+    });
+    const distribute = (nodes: BuilderProfile[], radius: number, phaseShift = 0) => {
+      if (nodes.length === 0) return [] as {x:number;y:number}[];
+      const weights = weightCounts(nodes);
+      const total = weights.reduce((a,b)=>a+b,0);
+      let angleCursor = -Math.PI/2 + phaseShift; // start top
+      return nodes.map((n,i) => {
+        const span = (2*Math.PI)*(weights[i]/total);
+        const angle = angleCursor + span/2; // center of span
+        angleCursor += span;
+        return { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) };
+      });
+    };
+    const firstPos = distribute(first, r1, 0);
+    const secondPos = distribute(secondRingNodes, r2, Math.PI/(secondRingNodes.length||1));
+    const thirdPos = distribute(thirdRingNodes, r3, Math.PI/(thirdRingNodes.length||1));
+
+    // Helper to push an edge with depth-based base opacity & selection highlighting.
+    // depth: 0 center->first, 1 first->second, 2 outward
+    const pushEdge = (
+      acc: React.ReactElement[], key: string,
+      ax: number, ay: number, bx: number, by: number,
+      depth: number, aId: string, bId: string
+    ) => {
+      const dx = bx - ax; const dy = by - ay; const dist = Math.hypot(dx, dy); if (dist === 0) return;
+      const angle = Math.atan2(dy, dx);
+      const baseOpacity = depth === 0 ? 0.55 : depth === 1 ? 0.38 : 0.22; // subtler baseline (GitHub network vibe)
+      const isHighlighted = !!selectedNode && (selectedNode === aId || selectedNode === bId);
+      const dimFactor = selectedNode ? (isHighlighted ? 1 : 0.12) : 1;
+      const opacity = baseOpacity * dimFactor + (isHighlighted ? 0.25 : 0); // bump highlighted edge visibility
+      const color = isHighlighted ? '#ffffff' : '#30363d';
+      acc.push(
+        <View
+          key={key}
+          style={[styles.edgeLineBase, { backgroundColor: color, opacity, left: (ax+bx)/2 - dist/2, top: (ay+by)/2 - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]}
+        />
+      );
+    };
 
     const renderEdges = () => {
       const edges: React.ReactElement[] = [];
-      // Center -> first
-      first.forEach((p, i) => {
-        const dx = firstPos[i].x - center; const dy = firstPos[i].y - center; const dist = Math.hypot(dx, dy);
-        const angle = Math.atan2(dy, dx); const midX = (firstPos[i].x + center) / 2; const midY = (firstPos[i].y + center) / 2;
-        edges.push(<View key={'edge-f-' + p.id} style={[styles.edgeLineStrong,{ left: midX - dist/2, top: midY - 1, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
-      });
-      // first -> second
+      // Center -> first (depth 0)
+  first.forEach((p,i) => pushEdge(edges, 'edge-f-'+p.id, center, center, firstPos[i].x, firstPos[i].y, 0, 'ME', p.id));
+      // first -> second (depth 1)
       secondRingNodes.forEach((p, si) => {
         const parents = first.filter(f => (f.liked || []).includes(p.id));
         parents.forEach(parent => {
           const pi = first.indexOf(parent); if (pi === -1) return;
-          const dx = secondPos[si].x - firstPos[pi].x; const dy = secondPos[si].y - firstPos[pi].y; const dist = Math.hypot(dx, dy);
-          const angle = Math.atan2(dy, dx); const midX = (secondPos[si].x + firstPos[pi].x)/2; const midY = (secondPos[si].y + firstPos[pi].y)/2;
-          edges.push(<View key={'edge-s2-' + p.id + '-' + parent.id} style={[styles.edgeLine,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
+          pushEdge(edges, 'edge-s2-'+p.id+'-'+parent.id, firstPos[pi].x, firstPos[pi].y, secondPos[si].x, secondPos[si].y, 1, parent.id, p.id);
         });
       });
-      // second -> third (treat secondRingNodes as parents for overflow lineage if liked[] matches)
+      // second/first -> third (depth 2)
       thirdRingNodes.forEach((p, ti) => {
         const parents = [...first, ...secondRingNodes].filter(f => (f.liked || []).includes(p.id));
         parents.forEach(parent => {
           const piFirst = first.indexOf(parent);
           const sourcePos = piFirst !== -1 ? firstPos[piFirst] : secondPos[secondRingNodes.indexOf(parent)];
           if (!sourcePos) return;
-          const dx = thirdPos[ti].x - sourcePos.x; const dy = thirdPos[ti].y - sourcePos.y; const dist = Math.hypot(dx, dy);
-          const angle = Math.atan2(dy, dx); const midX = (thirdPos[ti].x + sourcePos.x)/2; const midY = (thirdPos[ti].y + sourcePos.y)/2;
-          edges.push(<View key={'edge-s3-' + p.id + '-' + parent.id} style={[styles.edgeLine,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />);
+          pushEdge(edges, 'edge-s3-'+p.id+'-'+parent.id, sourcePos.x, sourcePos.y, thirdPos[ti].x, thirdPos[ti].y, 2, parent.id, p.id);
         });
       });
       return edges;
@@ -444,33 +478,53 @@ export default function ExploreBuilders() {
       <View style={styles.graphWrapper}>
         <View style={[styles.graphCanvas,{ width: size, height: size }]}>          
           {renderEdges()}
-          {ringConnectors(firstPos, styles.ringLine, 'rf-')}
-          {ringConnectors(secondPos, styles.ringLineOuter, 'rs-')}
-          {thirdRingNodes.length > 1 && ringConnectors(thirdPos, styles.ringLineOuter, 'rt-')}
           {/* Center node */}
-          <View style={[styles.node, styles.nodeMe, { left: center - 20, top: center - 20 }]}>            
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setSelectedNode(s => s === 'ME' ? null : 'ME')}
+            style={[styles.node, styles.nodeMe,
+              selectedNode === 'ME' && styles.nodeSelected,
+              { left: center - (graphExpanded?16:20), top: center - (graphExpanded?16:20), width: graphExpanded?32:40, height: graphExpanded?32:40, borderRadius: graphExpanded?16:20 }]}>
             <Text style={styles.nodeLabel}>{currentUserProfile.displayName?.[0] || 'U'}</Text>
-          </View>
+          </TouchableOpacity>
           {/* First ring */}
           {first.map((p,i) => (
-            <View key={p.id} style={[styles.node, styles.nodeFirst, { left: firstPos[i].x - 18, top: firstPos[i].y - 18 }]}>              
-              <Text style={styles.nodeLabel}>{p.displayName?.[0] || '?'}</Text>
-            </View>
+            <TouchableOpacity
+              key={p.id}
+              activeOpacity={0.8}
+              onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}
+              style={[styles.node, styles.nodeFirst,
+                selectedNode === p.id && styles.nodeSelected,
+                { width: graphExpanded?26:36, height: graphExpanded?26:36, borderRadius: graphExpanded?13:18, left: firstPos[i].x - (graphExpanded?13:18), top: firstPos[i].y - (graphExpanded?13:18) }]}>
+              <Text style={[styles.nodeLabel,{fontSize: graphExpanded?11:14}]}>{p.displayName?.[0] || '?'}</Text>
+            </TouchableOpacity>
           ))}
           {/* Second ring */}
           {secondRingNodes.map((p,i) => (
-            <View key={p.id} style={[styles.node, styles.nodeSecond, { left: secondPos[i].x - 14, top: secondPos[i].y - 14 }]}>              
-              <Text style={styles.nodeLabelSmall}>{p.displayName?.[0] || '?'}</Text>
-            </View>
+            <TouchableOpacity
+              key={p.id}
+              activeOpacity={0.8}
+              onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}
+              style={[styles.node, styles.nodeSecond,
+                selectedNode === p.id && styles.nodeSelected,
+                { width: graphExpanded?22:28, height: graphExpanded?22:28, borderRadius: graphExpanded?11:14, left: secondPos[i].x - (graphExpanded?11:14), top: secondPos[i].y - (graphExpanded?11:14) }]}>
+              <Text style={[styles.nodeLabelSmall,{fontSize: graphExpanded?10:12}]}>{p.displayName?.[0] || '?'}</Text>
+            </TouchableOpacity>
           ))}
           {/* Third ring (reuse nodeSecond style for now) */}
           {thirdRingNodes.map((p,i) => (
-            <View key={p.id} style={[styles.node, styles.nodeSecond, { left: thirdPos[i].x - 14, top: thirdPos[i].y - 14, opacity:0.9 }]}>              
-              <Text style={styles.nodeLabelSmall}>{p.displayName?.[0] || '?'}</Text>
-            </View>
+            <TouchableOpacity
+              key={p.id}
+              activeOpacity={0.8}
+              onPress={() => setSelectedNode(s => s === p.id ? null : p.id)}
+              style={[styles.node, styles.nodeSecond,
+                selectedNode === p.id && styles.nodeSelected,
+                { width: graphExpanded?22:28, height: graphExpanded?22:28, borderRadius: graphExpanded?11:14, left: thirdPos[i].x - (graphExpanded?11:14), top: thirdPos[i].y - (graphExpanded?11:14), opacity:0.9 }]}>
+              <Text style={[styles.nodeLabelSmall,{fontSize: graphExpanded?10:12}]}>{p.displayName?.[0] || '?'}</Text>
+            </TouchableOpacity>
           ))}
         </View>
-        <Text style={styles.graphMeta}>{first.length} direct • {second.length} extended</Text>
+        <Text style={styles.graphMeta}>{first.length} direct • {second.length} extended {graphExpanded ? '(expanded)' : ''}</Text>
         {first.length === 0 && (
           <Text style={styles.graphHint}>Swipe right to start building your graph.</Text>
         )}
@@ -486,6 +540,10 @@ export default function ExploreBuilders() {
   return (
     <SafeAreaView style={styles.safeArea}>
       {renderGraph()}
+      <TouchableOpacity onPress={() => setGraphExpanded(e => !e)} style={styles.graphToggle} accessibilityLabel={graphExpanded? 'Collapse graph' : 'Expand graph'}>
+        <Text style={styles.graphToggleText}>{graphExpanded ? 'Collapse' : 'Expand'}</Text>
+      </TouchableOpacity>
+      {!graphExpanded && (
       <View style={styles.flexDeckWrapper}>
         <View style={styles.flexCardRegion}>
           {currentUserProfile && !allProfiles.find(p => p.id === currentUserProfile.id && (p.likedPosts || p.liked || p.ideaTitle !== undefined)) && (
@@ -544,7 +602,7 @@ export default function ExploreBuilders() {
           )}
         </View>
         {/* Removed fixed bottomActionBar; actions now inline under card */}
-      </View>
+      </View>) }
       {lastRemoteError && (
         <View style={styles.remoteErrorBanner}>
           <Text style={styles.remoteErrorText}>Remote error: {lastRemoteError}</Text>
@@ -587,10 +645,16 @@ const styles = StyleSheet.create({
     position: 'relative',
     marginBottom: 8,
   },
+  edgeLineBase: {
+    position: 'absolute',
+    height: 1,
+    backgroundColor: '#ffffff'
+  },
+  // Legacy styles retained (can remove later once confident) -----------------
   edgeLine: {
     position: 'absolute',
     height: 1,
-    backgroundColor: '#2f3f45',
+    backgroundColor: '#2f3f45'
   },
   edgeLineStrong: {
     position: 'absolute',
@@ -619,25 +683,32 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#1f6feb', // GitHub blue accent
     borderWidth: 2,
-    borderColor: '#3b82f6'
+    borderColor: '#388bfd'
   },
   nodeFirst: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#059669',
+    backgroundColor: '#238636', // GitHub green
     borderWidth: 2,
-    borderColor: '#10b981'
+    borderColor: '#2ea043'
   },
   nodeSecond: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#374151',
+    backgroundColor: '#30363d',
     borderWidth: 2,
-    borderColor: '#4b5563'
+    borderColor: '#484f58'
+  },
+  nodeSelected: {
+    shadowColor: '#ffffff',
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    borderColor: '#ffffff'
   },
   nodeLabel: { color: 'white', fontWeight: '700', fontSize: 14 },
   nodeLabelSmall: { color: 'white', fontWeight: '600', fontSize: 12 },
@@ -721,4 +792,6 @@ const styles = StyleSheet.create({
   remoteErrorBanner: { position:'absolute', top: 8, left: 0, right: 0, alignItems:'center' },
   remoteErrorText: { color:'#f87171', fontSize:12 },
   remoteDiagnosisText: { color:'#fda4af', fontSize:11, marginTop:4, paddingHorizontal:12, textAlign:'center' }
+  ,graphToggle: { position:'absolute', bottom: 18, right: 18, backgroundColor:'#1f2937', paddingHorizontal:16, paddingVertical:10, borderRadius:24, borderWidth:1, borderColor:'#334155', zIndex:40, shadowColor:'#000', shadowOpacity:0.35, shadowRadius:6, shadowOffset:{width:0,height:3} },
+  graphToggleText: { color:'#93c5fd', fontSize:12, fontWeight:'600' }
 });

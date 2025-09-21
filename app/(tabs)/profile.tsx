@@ -2,7 +2,7 @@ import { clearCredentials } from '@/constants/credentialStore';
 import { auth, db } from '@/constants/firebase';
 import { POSTS_COLLECTION } from '@/types/post';
 import { signOut } from 'firebase/auth';
-import { addDoc, collection, doc, onSnapshot, /* orderBy */ query, serverTimestamp, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, onSnapshot, /* orderBy */ query, serverTimestamp, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -91,9 +91,31 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const handleDeletePost = useCallback((postId: string) => {
+    if (!userId) return;
+    const post = posts.find(p => p.id === postId);
+    if (!post) return;
+    Alert.alert('Delete Post', 'Are you sure you want to delete this post? This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await deleteDoc(doc(db, POSTS_COLLECTION, postId));
+          } catch (e) {
+            console.warn('Delete failed', e);
+            Alert.alert('Error', 'Failed to delete post.');
+          }
+        } }
+    ]);
+  }, [userId, posts]);
+
   const renderItem = ({ item }: { item: PostItem }) => (
     <View style={styles.postCard}>
-      <Text style={styles.postTitle}>{item.title || 'Untitled'}</Text>
+      <View style={styles.postCardHeaderRow}>
+        <Text style={styles.postTitle}>{item.title || 'Untitled'}</Text>
+        <TouchableOpacity accessibilityLabel="Delete post" onPress={() => handleDeletePost(item.id)} style={styles.deletePill}>
+          <Text style={styles.deletePillText}>Delete</Text>
+        </TouchableOpacity>
+      </View>
       {!!item.description && <Text style={styles.postDesc}>{item.description}</Text>}
       <Text style={styles.postMeta}>{new Date(item.createdAt || Date.now()).toLocaleDateString()}</Text>
     </View>
@@ -224,6 +246,9 @@ const styles = StyleSheet.create({
   postTitle: { color:'white', fontSize:16, fontWeight:'600', marginBottom:6 },
   postDesc: { color:'#ccc', fontSize:14, lineHeight:18, marginBottom:8 },
   postMeta: { color:'#555', fontSize:11, marginTop:4 },
+  postCardHeaderRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:4 },
+  deletePill: { backgroundColor:'#3f1d1d', paddingHorizontal:12, paddingVertical:6, borderRadius:20, borderWidth:1, borderColor:'#5b2727' },
+  deletePillText: { color:'#f87171', fontSize:12, fontWeight:'600' },
   signOutContainer: { position:'absolute', right:20, top:8 },
   signOutButton: { backgroundColor:'#b91c1c', paddingVertical:8, paddingHorizontal:18, borderRadius:10 },
   signOutButtonText: { color:'white', fontWeight:'600', fontSize:14 },
