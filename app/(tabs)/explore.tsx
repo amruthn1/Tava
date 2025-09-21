@@ -25,6 +25,7 @@ interface BuilderProfile {
   // Internal: when deck item represents a post, we store underlying author id here
   _authorId?: string;
   email?: string | null;
+  interests?: string[]; // added for popup summary
 }
 
 // Post model (MVP)
@@ -44,16 +45,16 @@ const LOCAL_USER_ID = 'local-current-user'; // Stable identifier so effects do n
 // TODO(app/explore reintegration): Remove these constants and fetch from Firestore w/ pagination.
 // ----------------------------------------------------------------------------------
 const INITIAL_PROFILES: BuilderProfile[] = [
-  { id: 'demo-user-1', displayName: 'Alice', ideaTitle: 'AI Campus Concierge', ideaDescription: 'Campus assistant that forms micro sprint pods.', liked: [] },
-  { id: 'demo-user-2', displayName: 'Bob', ideaTitle: 'Realtime Study Matcher', ideaDescription: 'Pairs students based on current focus & energy.', liked: [] },
-  { id: 'demo-user-3', displayName: 'Chloe', ideaTitle: 'Founders Graph', ideaDescription: 'Dynamic network that expands as you connect.', liked: [] },
-  { id: 'demo-user-4', displayName: 'Devon', ideaTitle: 'Micro-Internships Hub', ideaDescription: 'Short scoped product pushes validating skill.', liked: [] },
-  { id: 'demo-user-5', displayName: 'Esha', ideaTitle: 'Pitch Replay Summarizer', ideaDescription: 'Transcribe & synthesize founder pitches.', liked: [] },
-  { id: 'demo-user-6', displayName: 'Finn', ideaTitle: 'Edge Deploy Manager', ideaDescription: 'Zero-config edge function orchestrator.', liked: [] },
-  { id: 'demo-user-7', displayName: 'Gia', ideaTitle: 'Contextual Notetaker', ideaDescription: 'Ambient notes auto-linking people & docs.', liked: [] },
-  { id: 'demo-user-8', displayName: 'Hiro', ideaTitle: 'Latency Budget Analyzer', ideaDescription: 'Trace ingestion + perf budget guidance.', liked: [] },
-  { id: 'demo-user-9', displayName: 'Ivy', ideaTitle: 'Onboarding Replay', ideaDescription: 'Interactive replays teaching internal flows.', liked: [] },
-  { id: 'demo-user-10', displayName: 'Jules', ideaTitle: 'Async Standup Synth', ideaDescription: 'Summarizes updates & flags blockers.', liked: [] }
+  { id: 'demo-user-1', displayName: 'Alice', email:'alice@example.com', interests:['AI','Campus','Matching'], ideaTitle: 'AI Campus Concierge', ideaDescription: 'Campus assistant that forms micro sprint pods.', liked: [] },
+  { id: 'demo-user-2', displayName: 'Bob', email:'bob@example.com', interests:['Realtime','Study','Focus'], ideaTitle: 'Realtime Study Matcher', ideaDescription: 'Pairs students based on current focus & energy.', liked: [] },
+  { id: 'demo-user-3', displayName: 'Chloe', email:'chloe@example.com', interests:['Graph','Networking','Founders'], ideaTitle: 'Founders Graph', ideaDescription: 'Dynamic network that expands as you connect.', liked: [] },
+  { id: 'demo-user-4', displayName: 'Devon', email:'devon@example.com', interests:['Internships','Skills','Talent'], ideaTitle: 'Micro-Internships Hub', ideaDescription: 'Short scoped product pushes validating skill.', liked: [] },
+  { id: 'demo-user-5', displayName: 'Esha', email:'esha@example.com', interests:['Pitch','Video','Transcription'], ideaTitle: 'Pitch Replay Summarizer', ideaDescription: 'Transcribe & synthesize founder pitches.', liked: [] },
+  { id: 'demo-user-6', displayName: 'Finn', email:'finn@example.com', interests:['Edge','Deployment','Infra'], ideaTitle: 'Edge Deploy Manager', ideaDescription: 'Zero-config edge function orchestrator.', liked: [] },
+  { id: 'demo-user-7', displayName: 'Gia', email:'gia@example.com', interests:['Notes','Context','Docs'], ideaTitle: 'Contextual Notetaker', ideaDescription: 'Ambient notes auto-linking people & docs.', liked: [] },
+  { id: 'demo-user-8', displayName: 'Hiro', email:'hiro@example.com', interests:['Performance','Tracing','Latency'], ideaTitle: 'Latency Budget Analyzer', ideaDescription: 'Trace ingestion + perf budget guidance.', liked: [] },
+  { id: 'demo-user-9', displayName: 'Ivy', email:'ivy@example.com', interests:['Onboarding','Replay','Education'], ideaTitle: 'Onboarding Replay', ideaDescription: 'Interactive replays teaching internal flows.', liked: [] },
+  { id: 'demo-user-10', displayName: 'Jules', email:'jules@example.com', interests:['Async','Standup','Summaries'], ideaTitle: 'Async Standup Synth', ideaDescription: 'Summarizes updates & flags blockers.', liked: [] }
 ];
 
 // (Removed INITIAL_POSTS list)
@@ -100,6 +101,10 @@ export default function ExploreBuilders() {
   const [pinned, setPinned] = useState<Record<string,{x:number;y:number}>>({});
   // Home (original layout) positions cached each render pass for reset logic.
   const homePositions = useRef<Record<string,{x:number;y:number}>>({}).current;
+  // Track node sizes for boundary clamping
+  const nodeSizesRef = useRef<Record<string, number>>({});
+  // Track current graph canvas size
+  const graphBoundsRef = useRef<{ size: number }>({ size: 0 });
 
   const ensureAnimated = (id: string, base: {x:number;y:number}) => {
     if (!nodePositions[id]) {
@@ -107,6 +112,9 @@ export default function ExploreBuilders() {
     }
     return nodePositions[id];
   };
+
+  // Track drag meta per node to differentiate taps from drags
+  const dragMetaRef = useRef<Record<string,{dragging:boolean}>>({});
 
   // springBack retained (currently unused after persistent positioning) for potential future reset feature
   const springBack = (id: string, to: {x:number;y:number}) => {
@@ -122,35 +130,51 @@ export default function ExploreBuilders() {
       onPanResponderGrant: () => {
         // bring to front by selecting (optional visual)
         setSelectedNode(prev => prev === id ? prev : id);
-        // If not yet pinned and currently at home, establish baseline pinned so drag offset is relative
-        if (!pinned[id]) {
-          const base = getHome();
-          setPinned(prev => ({ ...prev, [id]: base }));
-        }
+        // Mark drag meta
+        dragMetaRef.current[id] = { dragging: false };
       },
       onPanResponderMove: (_, gesture) => {
         const base = getHome(); // base already accounts for pinned location
         const pos = ensureAnimated(id, base);
-        // offset from home position
-        pos.setValue({ x: base.x + gesture.dx, y: base.y + gesture.dy });
-        // trigger light re-render for edges (throttled via animation frame)
-        requestAnimationFrame(() => setEdgeVersion(v => v + 1));
+        const dist = Math.hypot(gesture.dx, gesture.dy);
+        const DRAG_THRESHOLD = 6; // pixels before we treat as drag
+        if (!dragMetaRef.current[id]?.dragging) {
+          if (dist < DRAG_THRESHOLD) return; // ignore tiny movements (tap)
+          // Transition into dragging: establish pinned baseline if absent
+          dragMetaRef.current[id] = { dragging: true };
+          if (!pinned[id]) {
+            setPinned(prev => ({ ...prev, [id]: base }));
+          }
+        }
+        // Actively dragging
+        if (dragMetaRef.current[id]?.dragging) {
+          const size = graphBoundsRef.current.size;
+          const diam = nodeSizesRef.current[id] || 24;
+          const maxXY = Math.max(0, size - diam);
+          const nx = Math.max(0, Math.min(maxXY, base.x + gesture.dx));
+          const ny = Math.max(0, Math.min(maxXY, base.y + gesture.dy));
+          pos.setValue({ x: nx, y: ny });
+          requestAnimationFrame(() => setEdgeVersion(v => v + 1));
+        }
       },
       onPanResponderRelease: (_, gesture) => {
         const base = getHome();
         const pos = ensureAnimated(id, base);
-        // Final position includes drag delta + small inertial nudge
+        if (!dragMetaRef.current[id]?.dragging) {
+          // Treat as tap only: do not reposition or pin.
+          return;
+        }
+        // Drag release with slight inertial nudge
         const nudgeScale = 0.12;
-        const dragX = base.x + gesture.dx;
-        const dragY = base.y + gesture.dy;
-        const target = {
-          x: dragX + Math.max(-40, Math.min(40, gesture.vx * 100 * nudgeScale)),
-          y: dragY + Math.max(-40, Math.min(40, gesture.vy * 100 * nudgeScale))
-        };
+        let dragX = base.x + gesture.dx + Math.max(-40, Math.min(40, gesture.vx * 100 * nudgeScale));
+        let dragY = base.y + gesture.dy + Math.max(-40, Math.min(40, gesture.vy * 100 * nudgeScale));
+        const size = graphBoundsRef.current.size;
+        const diam = nodeSizesRef.current[id] || 24;
+        const maxXY = Math.max(0, size - diam);
+        const target = { x: Math.max(0, Math.min(maxXY, dragX)), y: Math.max(0, Math.min(maxXY, dragY)) };
         Animated.timing(pos, { toValue: target, duration: 140, useNativeDriver: false }).start(() => {
-          // Persist (pin) the node at new absolute coordinates
-            setPinned(prev => ({ ...prev, [id]: target }));
-            setEdgeVersion(v => v + 1);
+          setPinned(prev => ({ ...prev, [id]: target }));
+          setEdgeVersion(v => v + 1);
         });
       },
       onPanResponderTerminate: () => {
@@ -267,7 +291,6 @@ export default function ExploreBuilders() {
     unsubscribe = onSnapshot(
       collection(db, 'users'),
       snapshot => {
-        console.log('[Explore] Received users snapshot (count=', snapshot.size, ')');
         const remoteProfiles: BuilderProfile[] = snapshot.docs.map(docSnap => {
           const data: any = docSnap.data() || {};
           return {
@@ -478,42 +501,53 @@ export default function ExploreBuilders() {
     const second = graphData.second;
 
     // Parameters
-  const MIN_ARC_GAP = 18;
-  const RING_PADDING = 80; // previously conditional
-  const BASE_RADIUS = 90;  // previously conditional
+  const MIN_ARC_GAP = 20; // slightly larger minimum arc spacing
+  const RING_PADDING = 110; // more space between rings
+  const BASE_RADIUS = 140;  // larger base radius for first ring spread
   const MAX_SIZE = 520;    // always expanded size
 
-    // Compute required radius for a given node count so arc length >= MIN_ARC_GAP
+    // --- Simplified ring layout (ignore previous complex attempts) -----------------
+    // Direct connections -> ring 1, extended -> ring 2, overflow -> ring 3.
     const radiusFor = (count: number, base: number) => {
       if (count <= 1) return base;
+      // Ensure minimum arc gap
       const needed = MIN_ARC_GAP * count / (2 * Math.PI);
       return Math.max(base, needed);
     };
 
     let r1 = radiusFor(first.length, BASE_RADIUS);
     let r2 = r1 + RING_PADDING;
-    let r3 = r2 + RING_PADDING; // potential third ring
+    let r3 = r2 + RING_PADDING;
 
-    // If second ring overcrowded (too many second-degree nodes), spill to third ring
-    const secondCap = Math.floor((2 * Math.PI * r2) / MIN_ARC_GAP);
+    const ring2Cap = Math.floor((2 * Math.PI * r2) / MIN_ARC_GAP);
     let secondRingNodes: typeof second = [];
     let thirdRingNodes: typeof second = [];
-    if (second.length > secondCap) {
-      secondRingNodes = second.slice(0, secondCap);
-      thirdRingNodes = second.slice(secondCap);
+    if (second.length > ring2Cap) {
+      secondRingNodes = second.slice(0, ring2Cap);
+      thirdRingNodes = second.slice(ring2Cap);
     } else {
       secondRingNodes = second;
     }
-    if (thirdRingNodes.length === 0) {
-      // shrink r3 if unused
-      r3 = r2;
-    }
+    if (thirdRingNodes.length === 0) r3 = r2;
 
-    // Final canvas size (diameter of largest ring + node diameter margin)
-    const largestR = thirdRingNodes.length ? r3 : (secondRingNodes.length ? r2 : r1);
-  const nodeDiameter = 28; // expanded size
-    const size = Math.min(MAX_SIZE, Math.ceil(largestR * 2 + nodeDiameter + 12));
-    const center = size / 2;
+  // Final canvas size & potential uniform scale so entire graph fits.
+  let largestR = thirdRingNodes.length ? r3 : (secondRingNodes.length ? r2 : r1);
+  const nodeDiameter = 32; // reference diameter including center sizing margin
+  const windowDims = Dimensions.get('window');
+  const windowWidth = windowDims.width;
+  const windowHeight = windowDims.height;
+  const rawCanvasSize = Math.ceil(largestR * 2 + nodeDiameter + 8);
+  const maxSizeByWidth = windowWidth - 32;
+  const maxSizeByHeight = Math.max(140, Math.floor(windowHeight * 0.65 - 56));
+  const maxAllowed = Math.min(MAX_SIZE, maxSizeByWidth, maxSizeByHeight);
+  let scale = 1;
+  if (rawCanvasSize > maxAllowed) {
+    scale = maxAllowed / rawCanvasSize;
+    r1 *= scale; r2 *= scale; r3 *= scale; largestR *= scale;
+  }
+  const size = Math.ceil(Math.min(rawCanvasSize * scale, maxAllowed));
+  graphBoundsRef.current.size = size;
+  const center = size / 2;
 
     const place = (count: number, radius: number, offset = -Math.PI / 2) => {
       if (count === 0) return [] as { x: number; y: number }[];
@@ -522,40 +556,59 @@ export default function ExploreBuilders() {
         return { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) };
       });
     };
-    // Asymmetric weighting: angle slots allocated proportional to descendant counts to reduce symmetry.
-    const weightCounts = (nodes: BuilderProfile[]) => nodes.map(n => {
-      const children = second.filter(s => (n.likedPosts||[]).includes(s.id)).length;
-      return 1 + children; // base weight 1 + child count
-    });
-    // Deterministic pseudo-random based on node id (simple hash)
+    // Simple deterministic hash (0..1) for jitter
     const hash01 = (id: string) => {
-      let h = 0; for (let i=0;i<id.length;i++) { h = (h*131 + id.charCodeAt(i)) >>> 0; }
-      return (h & 0xffffff) / 0xffffff; // 0..1
+      let h = 0; for (let i=0;i<id.length;i++) h = (h*131 + id.charCodeAt(i)) >>> 0;
+      return (h & 0xffffff) / 0xffffff;
     };
-    const distribute = (nodes: BuilderProfile[], radius: number, phaseShift = 0) => {
-      if (nodes.length === 0) return [] as {x:number;y:number}[];
-      const weights = weightCounts(nodes);
-      const total = weights.reduce((a,b)=>a+b,0);
-      let angleCursor = -Math.PI/2 + phaseShift; // start top
-      return nodes.map((n,i) => {
-        const span = (2*Math.PI)*(weights[i]/total);
-        // Base angle center of allocated span
-        let angle = angleCursor + span/2;
-        // Apply deterministic jitter: small angular offset and slight radial perturbation
-        const r1 = hash01(n.id + ':a');
-        const r2 = hash01(n.id + ':b');
-        const maxAngleJitter = Math.min(0.35, span * 0.45); // keep within local slot
-        const angleJitter = (r1 - 0.5) * 2 * maxAngleJitter; // symmetric about 0
-        const radialJitter = (r2 - 0.5) * radius * 0.08; // up to ±8% of radius
-        angle += angleJitter;
-        const effectiveRadius = radius + radialJitter;
-        angleCursor += span;
-        return { x: center + effectiveRadius * Math.cos(angle), y: center + effectiveRadius * Math.sin(angle) };
+    // Slight noise so rings aren't perfectly circular
+    const ANGLE_JITTER_MAX = 0.09; // ~5.15 degrees
+    const RADIAL_JITTER_FRAC = 0.06; // ±6% radial variation
+    const placeRingNeat = (nodes: BuilderProfile[], radius: number) => {
+      const N = nodes.length;
+      if (N === 0) return [] as {x:number;y:number}[];
+      return nodes.map((n, i) => {
+        const baseAngle = -Math.PI/2 + (2*Math.PI * i)/N; // start at top
+        const rA = hash01(n.id + ':a');
+        const rB = hash01(n.id + ':b');
+        const angle = baseAngle + (rA - 0.5) * 2 * ANGLE_JITTER_MAX;
+        const rad = radius + (rB - 0.5) * 2 * radius * RADIAL_JITTER_FRAC;
+        return { x: center + rad * Math.cos(angle), y: center + rad * Math.sin(angle) };
       });
     };
-  const firstPos = distribute(first, r1, 0);
-  const secondPos = distribute(secondRingNodes, r2, Math.PI/(secondRingNodes.length||1));
-  const thirdPos = distribute(thirdRingNodes, r3, Math.PI/(thirdRingNodes.length||1));
+    // Generate ring positions
+    let firstPos = placeRingNeat(first, r1);
+    let secondPos = placeRingNeat(secondRingNodes, r2);
+    let thirdPos = placeRingNeat(thirdRingNodes, r3);
+
+    // Enforce non-overlap along each ring (simple angular spacing correction)
+    const separateRing = (positions: {x:number;y:number}[], radius: number, nodeDiam: number, margin = 4) => {
+      if (positions.length < 2) return positions;
+      // Map to angles
+      const items = positions.map((p,i) => ({ i, angle: Math.atan2(p.y - center, p.x - center) }));
+      const minArc = nodeDiam + margin; // required linear arc
+      const minAngle = minArc / radius;  // radians
+      items.sort((a,b)=> a.angle - b.angle);
+      // Single forward pass to push overlaps
+      for (let k=0; k<items.length; k++) {
+        const cur = items[k];
+        const nxt = items[(k+1)%items.length];
+        let diff = nxt.angle - cur.angle;
+        if (k === items.length -1) diff = (nxt.angle + Math.PI*2) - cur.angle; // wrap segment
+        if (diff < minAngle) {
+          const needed = minAngle - diff;
+          // distribute half shift to each side except wrap case to avoid drift
+          cur.angle -= needed/2;
+          nxt.angle += needed/2;
+        }
+      }
+      // Normalize and rebuild
+      return items.map(it => ({ x: center + radius * Math.cos(it.angle), y: center + radius * Math.sin(it.angle) }));
+    };
+    firstPos = separateRing(firstPos, r1, 26, 6);
+    secondPos = separateRing(secondPos, r2, 22, 6);
+    thirdPos = separateRing(thirdPos, r3, 22, 6);
+
 
     // Helper to push an edge with depth-based base opacity & selection highlighting.
     // depth: 0 center->first, 1 first->second, 2 outward
@@ -688,15 +741,29 @@ export default function ExploreBuilders() {
       const next = positions[(i+1)%positions.length]; const dx = next.x - pos.x; const dy = next.y - pos.y; const dist = Math.hypot(dx,dy); const angle = Math.atan2(dy,dx); const midX = (pos.x + next.x)/2; const midY = (pos.y + next.y)/2; return <View key={prefix + i} style={[style,{ left: midX - dist/2, top: midY - 0.5, width: dist, transform:[{ rotate: `${angle}rad` }] }]} />; }) : null;
 
     // Cache home positions for reset logic (raw layout centers minus radius offsets used for left/top positioning)
-    homePositions['ME'] = { x: center - 16, y: center - 16 };
-    first.forEach((p,i) => { homePositions[p.id] = { x: firstPos[i].x - 13, y: firstPos[i].y - 13 }; });
-    secondRingNodes.forEach((p,i) => { homePositions[p.id] = { x: secondPos[i].x - 11, y: secondPos[i].y - 11 }; });
-    thirdRingNodes.forEach((p,i) => { homePositions[p.id] = { x: thirdPos[i].x - 11, y: thirdPos[i].y - 11 }; });
+  homePositions['ME'] = { x: center - 16, y: center - 16 }; nodeSizesRef.current['ME'] = 32;
+  first.forEach((p,i) => { homePositions[p.id] = { x: firstPos[i].x - 13, y: firstPos[i].y - 13 }; nodeSizesRef.current[p.id] = 26; });
+  secondRingNodes.forEach((p,i) => { homePositions[p.id] = { x: secondPos[i].x - 11, y: secondPos[i].y - 11 }; nodeSizesRef.current[p.id] = 22; });
+  thirdRingNodes.forEach((p,i) => { homePositions[p.id] = { x: thirdPos[i].x - 11, y: thirdPos[i].y - 11 }; nodeSizesRef.current[p.id] = 22; });
 
     return (
       <View style={styles.graphWrapper}>
   <Pressable style={[styles.graphCanvas,{ width: size, height: size }]} onPress={resetAllNodes}>
           {renderEdges()}
+          {/* Selected node info popup */}
+          {(() => {
+            if (!selectedNode) return null;
+            const sel = selectedNode === 'ME' ? currentUserProfile : [...first, ...secondRingNodes, ...thirdRingNodes].find(p => p.id === selectedNode);
+            if (!sel) return null;
+            const email = sel.email || 'Unknown email';
+            const interestsText = (sel.interests && sel.interests.length) ? sel.interests.slice(0,5).join(', ') : 'No interests listed';
+            return (
+              <View pointerEvents="none" style={styles.nodeInfoPopup}>
+                <Text style={styles.nodeInfoEmail} numberOfLines={1}>{email}</Text>
+                <Text style={styles.nodeInfoInterests} numberOfLines={2}>{interestsText}</Text>
+              </View>
+            );
+          })()}
           {/* Center node */}
           {(() => {
             const home = pinned['ME'] ? pinned['ME'] : homePositions['ME'];
@@ -882,6 +949,21 @@ const styles = StyleSheet.create({
     position: 'relative',
     marginBottom: 8,
   },
+  nodeInfoPopup: {
+    position:'absolute',
+    top:8,
+    right:8,
+    backgroundColor:'rgba(17,24,39,0.92)',
+    borderWidth:1,
+    borderColor:'#30363d',
+    borderRadius:10,
+    paddingVertical:8,
+    paddingHorizontal:10,
+    maxWidth:200,
+    gap:4
+  },
+  nodeInfoEmail: { color:'#fff', fontSize:12, fontWeight:'600' },
+  nodeInfoInterests: { color:'#cbd5e1', fontSize:11, lineHeight:15 },
   edgeLineBase: {
     position: 'absolute',
     height: 1,
