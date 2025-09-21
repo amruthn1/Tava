@@ -34,7 +34,7 @@ export default function ProfileScreen() {
   const [linkedinUrl, setLinkedinUrl] = useState('');
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
-  const [showConnectionsModal, setShowConnectionsModal] = useState(false);
+  // Removed connections modal; direct connections now inline
   // Optional location for new post
   const [attachLocation, setAttachLocation] = useState(false);
   const [currentCoords, setCurrentCoords] = useState<{ latitude:number; longitude:number } | null>(null);
@@ -319,25 +319,27 @@ export default function ProfileScreen() {
     const initials = (profile?.displayName || user?.email || 'U').split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase();
     return (
       <View style={styles.headerWrapper}>
+        {/* 1. PROFILE SECTION (name, email, links, sign out) */}
+        {user && (
+          <TouchableOpacity style={styles.signOutTopRight} onPress={handleSignOut} accessibilityLabel="Sign out">
+            <Text style={styles.signOutTopRightText}>Sign Out</Text>
+          </TouchableOpacity>
+        )}
         <View style={styles.topRow}>
-          <View style={styles.avatarCircle}><Text style={styles.avatarText}>{initials}</Text></View>
-          <View style={{ flex:1, marginLeft:14 }}>
+          <View style={{ flex:1 }}>
             <Text style={styles.screenTitle}>{profile?.displayName || user?.email || 'Your Profile'}</Text>
             {(profile?.email || user?.email) && (
               <Text style={styles.userMetaLine}>{profile?.email || user?.email}</Text>
             )}
+            {user && (
+              <View style={[styles.actionsRow,{ marginTop:8, marginBottom:0 }]}>              
+                <TouchableOpacity style={[styles.smallAction, styles.editAction]} onPress={() => setShowEditProfile(true)}>
+                  <Text style={styles.smallActionText}>Edit</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
-        {user && (
-          <View style={styles.actionsRow}>              
-            <TouchableOpacity style={styles.smallAction} onPress={() => setShowCreateModal(true)}>
-              <Text style={styles.smallActionText}>Post</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.smallAction,{ backgroundColor:'#1e293b', borderColor:'#334155' }]} onPress={() => setShowEditProfile(true)}>
-              <Text style={styles.smallActionText}>Edit</Text>
-            </TouchableOpacity>
-          </View>
-        )}
         {(profile?.interests?.length || profile?.linkedinUrl || profile?.websiteUrl) ? (
           <View style={styles.chipsRow}>
             {!!profile?.interests?.length && (
@@ -363,14 +365,47 @@ export default function ProfileScreen() {
             {profile.ideaDescription && <Text style={styles.ideaDesc}>{profile.ideaDescription}</Text>}
           </View>
         )}
+        
         <View style={styles.divider} />
-        <TouchableOpacity style={styles.connectionsTrigger} onPress={() => setShowConnectionsModal(true)}>
-          <Text style={styles.connectionsTriggerText}>Direct Connections ({directConnections.length})</Text>
-        </TouchableOpacity>
+        
+        {/* 2. HORIZONTAL NEW POST BUTTON */}
+        {user && (
+          <View style={styles.createInlineRow}>
+            <TouchableOpacity style={styles.createInlineButton} onPress={() => setShowCreateModal(true)}>
+              <Text style={styles.createInlineButtonText}>New Post</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        
         <View style={styles.divider} />
-        <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-          <Text style={styles.signOutButtonText}>Sign Out</Text>
-        </TouchableOpacity>
+        
+        {/* 3. DIRECT CONNECTIONS SECTION */}
+        <Text style={[styles.connectionsTriggerText,{ marginBottom:12 }]}>Direct Connections ({directConnections.length})</Text>
+        {directConnections.length === 0 ? (
+          <Text style={styles.emptyText}>No direct connections yet.</Text>
+        ) : (
+          <View style={{ marginBottom:8 }}>
+            {directConnections.map(conn => {
+              const mutual = mutualIdSet.has(conn.id);
+              return (
+                <View key={conn.id} style={styles.connCard}>
+                  <View style={{ flex:1 }}>
+                    <Text style={styles.connName}>{conn.displayName || 'Unnamed'}</Text>
+                    {mutual && !!conn.email && <Text style={styles.connSub}>{conn.email}</Text>}
+                    {!mutual && <Text style={[styles.connSub,{ color:'#9ca3af' }]}>Waiting for mutual connect</Text>}
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.connActionBtn, (!conn.email || !mutual) && { opacity:0.35 }]}
+                    disabled={!conn.email || !mutual}
+                    onPress={() => { try { if (conn.email) Linking.openURL(`mailto:${encodeURIComponent(conn.email)}`); } catch {} }}>
+                    <Text style={styles.connActionText}>Email</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        )}
+        <View style={styles.divider} />
       </View>
     );
   }, [user, profile, directConnections, mutualIdSet]);
@@ -399,7 +434,7 @@ export default function ProfileScreen() {
             <View style={styles.modalOverlay}>
               <TouchableWithoutFeedback onPress={() => { /* swallow */ }}>
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalCardWrapper}>
-                  <View style={styles.modalCard}>
+                  <View style={styles.editModalCard}>
                     <View style={styles.modalHeaderRow}>
                       <Text style={styles.modalTitle}>Create Post</Text>
                       <TouchableOpacity onPress={() => setShowCreateModal(false)} style={styles.closeBtn}><Text style={styles.closeBtnText}>✕</Text></TouchableOpacity>
@@ -436,8 +471,8 @@ export default function ProfileScreen() {
                             setLocationLabel(null);
                           }
                         }}
-                        thumbColor={attachLocation ? '#34C759' : '#888'}
-                        trackColor={{ false:'#555', true:'#1e572f' }}
+                        thumbColor={attachLocation ? '#34d399' : '#888'}
+                        trackColor={{ false:'#555', true:'#1f4736' }}
                       />
                     </View>
                     {attachLocation && (
@@ -451,8 +486,8 @@ export default function ProfileScreen() {
                         {locError && <Text style={styles.locationError}>{locError}</Text>}
                       </View>
                     )}
-                    <TouchableOpacity disabled={submitting} style={[styles.submitButton, submitting && { opacity:0.5 }]} onPress={handleSubmit}>
-                      <Text style={styles.submitButtonText}>{submitting ? 'Publishing...' : 'Publish Post'}</Text>
+                    <TouchableOpacity disabled={submitting} style={[styles.saveProfileBtn, submitting && { opacity:0.5 }]} onPress={handleSubmit}>
+                      <Text style={styles.saveProfileText}>{submitting ? 'Publishing...' : 'Publish Post'}</Text>
                     </TouchableOpacity>
                   </View>
                 </KeyboardAvoidingView>
@@ -493,48 +528,7 @@ export default function ProfileScreen() {
             </View>
           </TouchableWithoutFeedback>
         </Modal>
-        {/* Connections Modal */}
-        <Modal visible={showConnectionsModal} animationType="slide" transparent onRequestClose={() => setShowConnectionsModal(false)}>
-          <TouchableWithoutFeedback onPress={() => setShowConnectionsModal(false)}>
-            <View style={styles.modalOverlay}>
-              <TouchableWithoutFeedback onPress={() => { /* swallow */ }}>
-                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalCardWrapper}>
-                  <ScrollView
-                    style={styles.connectionsModalCard}
-                    contentContainerStyle={{ paddingBottom:12 }}
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
-                  >
-                    <View style={styles.modalHeaderRow}>
-                      <Text style={styles.modalTitle}>Direct Connections</Text>
-                      <TouchableOpacity onPress={() => setShowConnectionsModal(false)} style={styles.closeBtn}><Text style={styles.closeBtnText}>✕</Text></TouchableOpacity>
-                    </View>
-                    {directConnections.length === 0 ? (
-                      <Text style={styles.emptyText}>No direct connections yet.</Text>
-                    ) : directConnections.map(conn => {
-                      const mutual = mutualIdSet.has(conn.id);
-                      return (
-                        <View key={conn.id} style={styles.connCard}>
-                          <View style={{ flex:1 }}>
-                            <Text style={styles.connName}>{conn.displayName || 'Unnamed'}</Text>
-                            {mutual && !!conn.email && <Text style={styles.connSub}>{conn.email}</Text>}
-                            {!mutual && <Text style={[styles.connSub,{ color:'#9ca3af' }]}>Waiting for mutual connect</Text>}
-                          </View>
-                          <TouchableOpacity
-                            style={[styles.connActionBtn, (!conn.email || !mutual) && { opacity:0.35 }]}
-                            disabled={!conn.email || !mutual}
-                            onPress={() => { try { if (conn.email) Linking.openURL(`mailto:${encodeURIComponent(conn.email)}`); } catch {} }}>
-                            <Text style={styles.connActionText}>Email</Text>
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })}
-                  </ScrollView>
-                </KeyboardAvoidingView>
-              </TouchableWithoutFeedback>
-            </View>
-          </TouchableWithoutFeedback>
-        </Modal>
+        {/* Connections modal removed; connections shown inline in header */}
       </View>
     </TouchableWithoutFeedback>
   );
@@ -564,8 +558,9 @@ const styles = StyleSheet.create({
   deletePill: { backgroundColor:'#3f1d1d', paddingHorizontal:12, paddingVertical:6, borderRadius:20, borderWidth:1, borderColor:'#5b2727' },
   deletePillText: { color:'#f87171', fontSize:12, fontWeight:'600' },
   signOutContainer: { position:'absolute', right:20, top:8 },
-  signOutButton: { backgroundColor:'#b91c1c', paddingVertical:8, paddingHorizontal:18, borderRadius:10 },
-  signOutButtonText: { color:'white', fontWeight:'600', fontSize:14 },
+  // signOutButton integrated into actionsRow (removed old standalone styles)
+  signOutButton: { },
+  signOutButtonText: { },
   fab: { position:'absolute', bottom:30, right:24, width:60, height:60, borderRadius:30, backgroundColor:'#2563eb', alignItems:'center', justifyContent:'center', shadowColor:'#000', shadowOpacity:0.3, shadowRadius:6, shadowOffset:{width:0,height:3} },
   fabPlus: { color:'white', fontSize:34, marginTop:-2 },
   bottomBar: { position:'absolute', left:0, right:0, bottom:0, flexDirection:'row', justifyContent:'space-evenly', paddingHorizontal:20, paddingBottom: Platform.OS === 'ios' ? 28 : 16, paddingTop:12, backgroundColor:'#111111', borderTopWidth:1, borderTopColor:'#1f2937' },
@@ -613,15 +608,15 @@ const styles = StyleSheet.create({
   ,floatingSignOutWrap: { position:'absolute', bottom:20, right:20 }
   ,signOutFloatingBtn: { backgroundColor:'#b91c1c', paddingHorizontal:16, paddingVertical:10, borderRadius:26, borderWidth:1, borderColor:'#dc2626' }
   ,signOutFloatingText: { color:'white', fontSize:13, fontWeight:'600' }
-  ,editModalCard: { backgroundColor:'#1e1e1e', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#333', maxHeight:'85%' }
-  ,smallLabel: { color:'#93c5fd', fontSize:11, fontWeight:'600', marginBottom:6 }
-  ,saveProfileBtn: { backgroundColor:'#2563eb', paddingVertical:12, borderRadius:10, alignItems:'center', marginTop:8 }
-  ,saveProfileText: { color:'white', fontWeight:'600', fontSize:15 }
+  ,editModalCard: { backgroundColor:'#1b1b1b', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#2a2a2a', maxHeight:'85%' }
+  ,smallLabel: { color:'#d1d5db', fontSize:11, fontWeight:'600', marginBottom:6 }
+  ,saveProfileBtn: { backgroundColor:'#142a20', borderWidth:1, borderColor:'#1f4736', paddingVertical:14, borderRadius:12, alignItems:'center', marginTop:20 }
+  ,saveProfileText: { color:'#34d399', fontWeight:'600', fontSize:15 }
   ,cancelProfileText: { color:'white', fontWeight:'600', fontSize:15 }
   ,cancelProfileBtn: { alignItems:'center', paddingVertical:10 }
-  ,connectionsTrigger: { backgroundColor:'#1b1f24', paddingHorizontal:14, paddingVertical:12, borderRadius:12, borderWidth:1, borderColor:'#2a3139' }
+  ,connectionsTrigger: { }
   ,connectionsTriggerText: { color:'#d1d5db', fontSize:13, fontWeight:'600' }
-  ,connectionsModalCard: { backgroundColor:'#1e1e1e', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#333', maxHeight:'75%' }
+  ,connectionsModalCard: { }
   ,locationToggleRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginTop:4, marginBottom:8 }
   ,locationToggleLabel: { color:'white', fontSize:14, fontWeight:'500' }
   ,locationBlock: { backgroundColor:'#151515', padding:12, borderRadius:12, borderWidth:1, borderColor:'#262626', marginBottom:12 }
@@ -631,6 +626,13 @@ const styles = StyleSheet.create({
   ,locateBtnText: { color:'white', fontWeight:'600', fontSize:14 }
   ,locationError: { color:'#f87171', marginTop:8, fontSize:12 }
   ,locationPreview: { color:'#9ca3af', marginTop:6, fontSize:12 }
+  // New inline layout styles
+  ,signOutTopRight: { position:'absolute', top:60, right:0, backgroundColor:'#2a1a1a', borderWidth:1, borderColor:'#442222', paddingHorizontal:16, paddingVertical:10, borderRadius:30, zIndex:10 }
+  ,signOutTopRightText: { color:'#f87171', fontWeight:'600', fontSize:13 }
+  ,editAction: { backgroundColor:'#1e293b', borderColor:'#334155' }
+  ,createInlineRow: { flexDirection:'row', alignItems:'center', marginTop:12, marginBottom:12 }
+  ,createInlineButton: { backgroundColor:'#142a20', borderWidth:1, borderColor:'#1f4736', paddingHorizontal:40, paddingVertical:14, borderRadius:40, flex:1 }
+  ,createInlineButtonText: { color:'#34d399', fontWeight:'600', fontSize:14, textAlign:'center' }
 });
 
 // Edit Profile Modal (appended component)

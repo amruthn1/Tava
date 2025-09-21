@@ -7,6 +7,7 @@ import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, Te
 export default function OnboardingScreen() {
   const user = auth.currentUser;
   const uid = user?.uid;
+  const [displayName, setDisplayName] = useState('');
   const [university, setUniversity] = useState('');
   const [interests, setInterests] = useState('');
   const [linkedinUrl, setLinkedinUrl] = useState('');
@@ -37,6 +38,7 @@ export default function OnboardingScreen() {
       const ref = doc(db, 'users', uid);
       // Use setDoc with merge to create if missing
       await setDoc(ref, {
+        displayName: displayName.trim() || null,
         university: university.trim() || null,
         interests: interestsArr,
         linkedinUrl: linkedinUrl.trim() || null,
@@ -64,6 +66,8 @@ export default function OnboardingScreen() {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Tell us more</Text>
         <Text style={styles.subtitle}>This helps others know who to connect with. You can edit later.</Text>
+        <Text style={styles.label}>Full Name</Text>
+        <TextInput style={styles.input} value={displayName} onChangeText={setDisplayName} placeholder="Your full name" placeholderTextColor="#666" />
         <Text style={styles.label}>University</Text>
         <TextInput style={styles.input} value={university} onChangeText={setUniversity} placeholder="Your university" placeholderTextColor="#666" />
         <Text style={styles.label}>Interests (comma separated)</Text>
