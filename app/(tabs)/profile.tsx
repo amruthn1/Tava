@@ -7,6 +7,7 @@ import { signOut } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, onSnapshot, /* orderBy */ query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface PostItem { id: string; title: string; description?: string | null; createdAt?: number; }
@@ -19,6 +20,9 @@ export default function ProfileScreen() {
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [personType, setPersonType] = useState('');
+  const [peopleNeeded, setPeopleNeeded] = useState('');
+  const [skillsets, setSkillsets] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [posts, setPosts] = useState<PostItem[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -37,6 +41,15 @@ export default function ProfileScreen() {
   const [locFetching, setLocFetching] = useState(false);
   const [locError, setLocError] = useState<string | null>(null);
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
+  
+  const personTypes = [
+    { label: 'Builder', value: 'builder' },
+    { label: 'Mentor', value: 'mentor' },
+    { label: 'Investor', value: 'investor' },
+    { label: 'Designer', value: 'designer' },
+    { label: 'Developer', value: 'developer' },
+    { label: 'Other', value: 'other' },
+  ];
 
   // Subscribe to this user's posts
   useEffect(() => {
@@ -103,16 +116,37 @@ export default function ProfileScreen() {
       if (attachLocation && currentCoords) {
         locationData = currentCoords;
       }
-      await addDoc(collection(db, POSTS_COLLECTION), {
+      
+      const postData: any = {
         title: title.trim(),
         description: description.trim() || null,
         authorId: userId,
         createdAt: serverTimestamp(),
-        ...(locationData ? { location: locationData } : {}),
-        ...(locationLabel ? { locationName: locationLabel } : {})
-      });
+        ...(locationData ? { 
+          location: {
+            latitude: locationData.latitude,
+            longitude: locationData.longitude,
+            ...(locationLabel ? { label: locationLabel } : {})
+          } 
+        } : {}),
+        ...(personType ? { personType } : {}),
+        ...(peopleNeeded ? { peopleNeeded: parseInt(peopleNeeded, 10) } : {}),
+        ...(skillsets ? { 
+          skillsets: skillsets
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+        } : {})
+      };
+      
+      await addDoc(collection(db, POSTS_COLLECTION), postData);
+      
+      // Reset form
       setTitle('');
       setDescription('');
+      setPersonType('');
+      setPeopleNeeded('');
+      setSkillsets('');
       setAttachLocation(false);
       setCurrentCoords(null);
       setLocationLabel(null);
@@ -123,7 +157,7 @@ export default function ProfileScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [title, description, userId, attachLocation, currentCoords]);
+  }, [title, description, userId, attachLocation, currentCoords, personType, peopleNeeded, skillsets, locationLabel]);
 
   const fetchCurrentLocation = useCallback(async () => {
     try {
@@ -309,16 +343,35 @@ export default function ProfileScreen() {
           </View>
         )}
         {/* Create Post Modal */}
-        <Modal visible={showCreateModal} animationType="slide" transparent onRequestClose={() => setShowCreateModal(false)}>
-          <TouchableWithoutFeedback onPress={() => setShowCreateModal(false)}>
-            <View style={styles.modalOverlay}>
-              <TouchableWithoutFeedback onPress={() => { /* swallow */ }}>
-                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalCardWrapper}>
-                  <View style={styles.editModalCard}>
-                    <View style={styles.modalHeaderRow}>
-                      <Text style={styles.modalTitle}>Create Post</Text>
-                      <TouchableOpacity onPress={() => setShowCreateModal(false)} style={styles.closeBtn}><Text style={styles.closeBtnText}>✕</Text></TouchableOpacity>
-                    </View>
+        <Modal 
+          visible={showCreateModal} 
+          animationType="slide" 
+          transparent={true}
+          onRequestClose={() => setShowCreateModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCardWrapper}>
+              <KeyboardAvoidingView 
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                style={{ flex: 1 }}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+              >
+                <View style={styles.editModalCard}>
+                  <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>Create Post</Text>
+                    <TouchableOpacity 
+                      onPress={() => setShowCreateModal(false)} 
+                      style={styles.closeBtn}
+                    >
+                      <Text style={styles.closeBtnText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                  
+                  <ScrollView 
+                    style={styles.modalScrollView}
+                    contentContainerStyle={styles.modalContentContainer}
+                    keyboardShouldPersistTaps="handled"
+                  >
                     <TextInput
                       style={styles.input}
                       placeholder="Project Title"
@@ -327,6 +380,7 @@ export default function ProfileScreen() {
                       onChangeText={setTitle}
                       returnKeyType="next"
                     />
+                    
                     <TextInput
                       style={[styles.input, styles.textArea]}
                       placeholder="Description (optional)"
@@ -336,7 +390,40 @@ export default function ProfileScreen() {
                       multiline
                       numberOfLines={4}
                     />
-                    {/* Optional Location Toggle */}
+                    
+                    <Text style={styles.smallLabel}>Looking for (e.g., Developer, Designer, Mentor, Investor)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g., Developer, Designer, Mentor"
+                      placeholderTextColor="#777"
+                      value={personType}
+                      onChangeText={setPersonType}
+                      returnKeyType="next"
+                    />
+                    
+                    <Text style={styles.smallLabel}>Number of people needed (optional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g., 2, 3-5, 5+"
+                      placeholderTextColor="#777"
+                      value={peopleNeeded}
+                      onChangeText={setPeopleNeeded}
+                      keyboardType="number-pad"
+                      returnKeyType="next"
+                    />
+                    
+                    <Text style={styles.smallLabel}>Skills needed (comma separated, optional)</Text>
+                    <TextInput
+                      style={[styles.input, styles.textArea]}
+                      placeholder="e.g., React, Node.js, UI/UX, Marketing"
+                      placeholderTextColor="#777"
+                      value={skillsets}
+                      onChangeText={setSkillsets}
+                      multiline
+                      numberOfLines={2}
+                      returnKeyType="done"
+                    />
+                    
                     <View style={styles.locationToggleRow}>
                       <Text style={styles.locationToggleLabel}>Attach Location</Text>
                       <Switch
@@ -352,9 +439,10 @@ export default function ProfileScreen() {
                           }
                         }}
                         thumbColor={attachLocation ? '#34d399' : '#888'}
-                        trackColor={{ false:'#555', true:'#1f4736' }}
+                        trackColor={{ false: '#555', true: '#1f4736' }}
                       />
                     </View>
+                    
                     {attachLocation && (
                       <View style={styles.locationBlock}>
                         {locFetching && <Text style={styles.locationPreview}>Fetching current location…</Text>}
@@ -366,14 +454,23 @@ export default function ProfileScreen() {
                         {locError && <Text style={styles.locationError}>{locError}</Text>}
                       </View>
                     )}
-                    <TouchableOpacity disabled={submitting} style={[styles.saveProfileBtn, submitting && { opacity:0.5 }]} onPress={handleSubmit}>
-                      <Text style={styles.saveProfileText}>{submitting ? 'Publishing...' : 'Publish Post'}</Text>
+                  </ScrollView>
+                  
+                  <View style={styles.modalFooter}>
+                    <TouchableOpacity 
+                      disabled={submitting} 
+                      style={[styles.saveProfileBtn, submitting && { opacity: 0.5 }]} 
+                      onPress={handleSubmit}
+                    >
+                      <Text style={styles.saveProfileText}>
+                        {submitting ? 'Publishing...' : 'Publish Post'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
-                </KeyboardAvoidingView>
-              </TouchableWithoutFeedback>
+                </View>
+              </KeyboardAvoidingView>
             </View>
-          </TouchableWithoutFeedback>
+          </View>
         </Modal>
         {/* Edit Profile Modal */}
         <Modal visible={showEditProfile} animationType="fade" transparent onRequestClose={() => setShowEditProfile(false)}>
@@ -383,7 +480,7 @@ export default function ProfileScreen() {
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalCardWrapper}>
                   <View style={styles.editModalCard}>
                     <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                      <View style={styles.modalHeaderRow}>
+                      <View style={styles.modalHeader}>
                         <Text style={styles.modalTitle}>Edit Profile</Text>
                         <TouchableOpacity onPress={() => setShowEditProfile(false)} style={styles.closeBtn}><Text style={styles.closeBtnText}>✕</Text></TouchableOpacity>
                       </View>
@@ -424,8 +521,23 @@ const styles = StyleSheet.create({
   ideaDesc: { color:'#ccc', fontSize:13, lineHeight:18 },
   createBox: { backgroundColor:'#1e1e1e', padding:16, borderRadius:16, borderWidth:1, borderColor:'#2f2f2f', marginBottom:16 },
   formLabel: { color:'#93c5fd', fontSize:12, fontWeight:'700', marginBottom:8, letterSpacing:0.5 },
-  input: { backgroundColor:'#262626', borderWidth:1, borderColor:'#333', borderRadius:10, paddingHorizontal:14, paddingVertical:12, color:'white', fontSize:15, marginBottom:12 },
-  textArea: { height:90, textAlignVertical:'top' },
+  input: { 
+    backgroundColor:'#262626', 
+    borderWidth:1, 
+    borderColor:'#333', 
+    borderRadius:10, 
+    paddingHorizontal:14, 
+    paddingVertical:12, 
+    color:'white', 
+    fontSize:15, 
+    marginBottom:12 
+  },
+  textArea: { 
+    minHeight: 90, 
+    maxHeight: 120,
+    textAlignVertical: 'top',
+    paddingTop: 12,
+  },
   submitButton: { backgroundColor:'#2563eb', paddingVertical:14, borderRadius:10, alignItems:'center', marginTop:4 },
   submitButtonText: { color:'white', fontWeight:'600', fontSize:16 },
   emptyText: { color:'#555', textAlign:'center', marginBottom:16, marginTop:4 },
@@ -447,12 +559,43 @@ const styles = StyleSheet.create({
   createBtn: { backgroundColor:'#2563eb' },
   signOutBtn: { backgroundColor:'#b91c1c' },
   bottomBtnText: { color:'white', fontWeight:'600', fontSize:14 },
-  modalCardWrapper: { width:'100%' },
-  modalOverlay: { flex:1, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'flex-end', padding:20, paddingBottom: 30  },
-  modalCard: { backgroundColor:'#1e1e1e', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#333' },
-  modalHeaderRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:12 },
+  modalCardWrapper: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    width: '100%',
+    margin: 0,
+  },
+  modalOverlay: { 
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  editModalCard: {
+    backgroundColor: '#1b1b1b',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+    maxHeight: '95%',
+    width: '100%',
+    paddingTop: Platform.OS === 'ios' ? 0 : 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: Platform.OS === 'ios' ? 40 : 20,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a2a',
+  },
   modalTitle: { color:'white', fontSize:18, fontWeight:'600' },
-  closeBtn: { padding:6 },
+  closeBtn: { 
+    padding: 8,
+    margin: -8,
+    marginRight: -4,
+  },
   closeBtnText: { color:'#999', fontSize:18 },
   bioBox: { backgroundColor:'#141414', padding:12, borderRadius:12, borderWidth:1, borderColor:'#222', marginBottom:14 },
   bioText: { color:'#ddd', fontSize:13, lineHeight:18 },
@@ -471,46 +614,257 @@ const styles = StyleSheet.create({
   sectionCard: { backgroundColor:'#141414', padding:14, borderRadius:14, borderWidth:1, borderColor:'#222', marginBottom:14 },
   sectionBody: { color:'#ddd', fontSize:13, lineHeight:18 },
   divider: { height:1, backgroundColor:'#1f2937', marginVertical:18, opacity:0.6 },
-  userMetaLine: { color:'#94a3b8', fontSize:12, marginTop:4 }
-  ,connCard: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', paddingVertical:10, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#2a2a2a' }
-  ,connName: { color:'white', fontSize:15, fontWeight:'600' }
-  ,connSub: { color:'#888', fontSize:12, marginTop:2 }
-  ,connActionBtn: { backgroundColor:'#2563eb', paddingHorizontal:12, paddingVertical:8, borderRadius:10 }
-  ,connActionText: { color:'white', fontWeight:'600' }
-  ,headerRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:4 }
-  ,editProfileBtn: { paddingHorizontal:12, paddingVertical:6, backgroundColor:'#1e293b', borderRadius:8, borderWidth:1, borderColor:'#334155' }
-  ,editProfileText: { color:'#93c5fd', fontSize:12, fontWeight:'600' }
-  ,inlineCreateBtn: { alignSelf:'flex-start', backgroundColor:'#2563eb', paddingHorizontal:14, paddingVertical:8, borderRadius:18, marginTop:8, marginBottom:8 }
-  ,inlineCreateText: { color:'white', fontSize:13, fontWeight:'600' }
-  ,infoGrid: { flexDirection:'row', flexWrap:'wrap', gap:8, marginBottom:12 }
-  ,infoItem: { backgroundColor:'#1b1b1b', paddingHorizontal:10, paddingVertical:6, borderRadius:14, color:'#ddd', fontSize:11, borderWidth:1, borderColor:'#2a2a2a' }
-  ,floatingSignOutWrap: { position:'absolute', bottom:20, right:20 }
-  ,signOutFloatingBtn: { backgroundColor:'#b91c1c', paddingHorizontal:16, paddingVertical:10, borderRadius:26, borderWidth:1, borderColor:'#dc2626' }
-  ,signOutFloatingText: { color:'white', fontSize:13, fontWeight:'600' }
-  ,editModalCard: { backgroundColor:'#1b1b1b', padding:20, borderRadius:24, width:'100%', borderWidth:1, borderColor:'#2a2a2a', maxHeight:'85%' }
-  ,smallLabel: { color:'#d1d5db', fontSize:11, fontWeight:'600', marginBottom:6 }
-  ,saveProfileBtn: { backgroundColor:'#142a20', borderWidth:1, borderColor:'#1f4736', paddingVertical:14, borderRadius:12, alignItems:'center' }
-  ,saveProfileText: { color:'#34d399', fontWeight:'600', fontSize:15 }
-  ,cancelProfileText: { color:'white', fontWeight:'600', fontSize:15 }
-  ,cancelProfileBtn: { alignItems:'center', paddingVertical:10 }
-  ,locationToggleRow: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginTop:4, marginBottom:8 }
-  ,locationToggleLabel: { color:'white', fontSize:14, fontWeight:'500' }
-  ,locationBlock: { backgroundColor:'#151515', padding:12, borderRadius:12, borderWidth:1, borderColor:'#262626', marginBottom:12 }
-  ,locationInputsRow: { flexDirection:'row', gap:10, marginBottom:10 }
-  ,halfInput: { flex:1 }
-  ,locateBtn: { backgroundColor:'#2563eb', paddingVertical:10, borderRadius:10, alignItems:'center', marginTop:4 }
-  ,locateBtnText: { color:'white', fontWeight:'600', fontSize:14 }
-  ,locationError: { color:'#f87171', marginTop:8, fontSize:12 }
-  ,locationPreview: { color:'#9ca3af', marginTop:6, fontSize:12 }
-  // New inline layout styles
-  ,signOutTopRight: { position:'absolute', top:130, right:0, backgroundColor:'#2a1a1a', borderWidth:1, borderColor:'#442222', paddingHorizontal:16, paddingVertical:10, borderRadius:30, zIndex:10 }
-  ,signOutTopRightText: { color:'#f87171', fontWeight:'600', fontSize:13 }
-  ,editAction: { backgroundColor:'#1e293b', borderColor:'#334155' }
-  ,signOutAction: { backgroundColor:'#2a1a1a', borderColor:'#442222' }
-  ,signOutActionText: { color:'#f87171', fontSize:12, fontWeight:'600' }
-  ,createInlineRow: { flexDirection:'row', alignItems:'center', marginTop:12, marginBottom:12 }
-  ,createInlineButton: { backgroundColor:'#142a20', borderWidth:1, borderColor:'#1f4736', paddingHorizontal:40, paddingVertical:14, borderRadius:40, flex:1 }
-  ,createInlineButtonText: { color:'#34d399', fontWeight:'600', fontSize:14, textAlign:'center' }
+  userMetaLine: { color:'#94a3b8', fontSize:12, marginTop:4 },
+  connCard: { 
+    flexDirection:'row', 
+    alignItems:'center', 
+    justifyContent:'space-between', 
+    paddingVertical:10, 
+    borderBottomWidth:StyleSheet.hairlineWidth, 
+    borderBottomColor:'#2a2a2a' 
+  },
+  connName: { 
+    color:'white', 
+    fontSize:15, 
+    fontWeight:'600' 
+  },
+  connSub: { 
+    color:'#888', 
+    fontSize:12, 
+    marginTop:2 
+  },
+  connActionBtn: { 
+    backgroundColor:'#2563eb', 
+    paddingHorizontal:12, 
+    paddingVertical:8, 
+    borderRadius:10 
+  },
+  connActionText: { 
+    color:'white', 
+    fontWeight:'600' 
+  },
+  headerRow: { 
+    flexDirection:'row', 
+    alignItems:'center', 
+    justifyContent:'space-between', 
+    marginBottom:4 
+  },
+  editProfileBtn: { 
+    paddingHorizontal:12, 
+    paddingVertical:6, 
+    backgroundColor:'#1e293b', 
+    borderRadius:8, 
+    borderWidth:1, 
+    borderColor:'#334155' 
+  },
+  editProfileText: { 
+    color:'#93c5fd', 
+    fontSize:12, 
+    fontWeight:'600' 
+  },
+  inlineCreateBtn: { 
+    alignSelf:'flex-start', 
+    backgroundColor:'#2563eb', 
+    paddingHorizontal:14, 
+    paddingVertical:8, 
+    borderRadius:18, 
+    marginTop:8, 
+    marginBottom:8 
+  },
+  inlineCreateText: { 
+    color:'white', 
+    fontSize:13, 
+    fontWeight:'600' 
+  },
+  infoGrid: { 
+    flexDirection:'row', 
+    flexWrap:'wrap', 
+    gap:8, 
+    marginBottom:12 
+  },
+  infoItem: { 
+    backgroundColor:'#1b1b1b', 
+    paddingHorizontal:10, 
+    paddingVertical:6, 
+    borderRadius:14, 
+    color:'#ddd', 
+    fontSize:11, 
+    borderWidth:1, 
+    borderColor:'#2a2a2a' 
+  },
+  floatingSignOutWrap: { 
+    position:'absolute', 
+    bottom:20, 
+    right:20 
+  },
+  signOutFloatingBtn: { 
+    backgroundColor:'#b91c1c', 
+    paddingHorizontal:16, 
+    paddingVertical:10, 
+    borderRadius:26, 
+    borderWidth:1, 
+    borderColor:'#dc2626' 
+  },
+  signOutFloatingText: { 
+    color:'white', 
+    fontSize:13, 
+    fontWeight:'600' 
+  },
+  modalScrollView: {
+    maxHeight: '100%',
+  },
+  modalContentContainer: {
+    padding: 20,
+    paddingBottom: 20,
+  },
+  modalFooter: {
+    padding: 20,
+    paddingTop: 12,
+    paddingBottom: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#2a2a2a',
+    backgroundColor: '#1b1b1b',
+  },
+  smallLabel: { color:'#d1d5db', fontSize:11, fontWeight:'600', marginBottom:6, marginTop: 4 },
+  saveProfileBtn: { 
+    backgroundColor:'#142a20', 
+    borderWidth:1, 
+    borderColor:'#1f4736', 
+    paddingVertical:14, 
+    borderRadius:12, 
+    alignItems:'center' 
+  },
+  saveProfileText: { 
+    color:'#34d399', 
+    fontWeight:'600', 
+    fontSize:15 
+  },
+  cancelProfileText: { 
+    color:'white', 
+    fontWeight:'600', 
+    fontSize:15 
+  },
+  cancelProfileBtn: { 
+    alignItems:'center', 
+    paddingVertical:10 
+  },
+  locationToggleRow: { 
+    flexDirection:'row', 
+    alignItems:'center', 
+    justifyContent:'space-between', 
+    marginTop:16, 
+    marginBottom:8 
+  },
+  locationToggleLabel: { 
+    color:'white', 
+    fontSize:14, 
+    fontWeight:'500' 
+  },
+  locationBlock: { 
+    backgroundColor:'#151515', 
+    padding:12, 
+    borderRadius:12, 
+    borderWidth:1, 
+    borderColor:'#262626', 
+    marginBottom:12 
+  },
+  locationPreview: {
+    color: '#9ca3af',
+    marginTop: 6,
+    fontSize: 12
+  },
+  locationError: {
+    color: '#f87171',
+    marginTop: 8,
+    fontSize: 12
+  },
+  locationInputsRow: { 
+    flexDirection:'row', 
+    gap:10, 
+    marginBottom:10 
+  },
+  halfInput: { 
+    flex:1 
+  },
+  locateBtn: { 
+    backgroundColor:'#2563eb', 
+    paddingVertical:10, 
+    borderRadius:10, 
+    alignItems:'center', 
+    marginTop:4 
+  },
+  locateBtnText: { 
+    color:'white', 
+    fontWeight:'600', 
+    fontSize:14 
+  },
+  signOutTopRight: { 
+    position:'absolute', 
+    top:130, 
+    right:0, 
+    backgroundColor:'#2a1a1a', 
+    borderWidth:1, 
+    borderColor:'#442222', 
+    paddingHorizontal:16, 
+    paddingVertical:10, 
+    borderRadius:30, 
+    zIndex:10 
+  },
+  signOutTopRightText: { 
+    color:'#f87171', 
+    fontWeight:'600', 
+    fontSize:13 
+  },
+  editAction: { 
+    backgroundColor:'#1e293b', 
+    borderColor:'#334155' 
+  },
+  signOutAction: { 
+    backgroundColor:'#2a1a1a', 
+    borderColor:'#442222' 
+  },
+  signOutActionText: { 
+    color:'#f87171', 
+    fontSize:12, 
+    fontWeight:'600' 
+  },
+  createInlineRow: { 
+    flexDirection:'row', 
+    alignItems:'center', 
+    marginTop:12, 
+    marginBottom:12 
+  },
+  createInlineButton: { 
+    backgroundColor:'#142a20', 
+    borderWidth:1, 
+    borderColor:'#1f4736', 
+    paddingHorizontal:40, 
+    paddingVertical:14, 
+    borderRadius:40, 
+    flex:1 
+  },
+  createInlineButtonText: { 
+    color:'#34d399', 
+    fontWeight:'600', 
+    fontSize:14, 
+    textAlign:'center' 
+  },
+  pickerContainer: { 
+    borderWidth: 1, 
+    borderColor: '#2a2a2a', 
+    borderRadius: 10, 
+    marginBottom: 12,
+    backgroundColor: '#1b1b1b',
+    overflow: 'hidden'
+  },
+  picker: { 
+    color: '#fff',
+    height: 50,
+  },
+  pickerItem: {
+    color: '#fff',
+    backgroundColor: '#1b1b1b',
+  }
 });
 
 // Edit Profile Modal (appended component)
