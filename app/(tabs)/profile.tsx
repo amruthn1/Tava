@@ -396,7 +396,7 @@ export default function ProfileScreen() {
                       numberOfLines={4}
                     />
                     
-                    <Text style={styles.smallLabel}>Looking for (e.g., Developer, Designer, Mentor, Investor)</Text>
+                    <Text style={styles.smallLabel}>Looking for (e.g., Developer, Cofounder, Mentor, Investor)</Text>
                     <TextInput
                       style={styles.input}
                       placeholder="e.g., Developer, Designer, Mentor"
