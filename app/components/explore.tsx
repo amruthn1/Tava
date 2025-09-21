@@ -480,19 +480,17 @@ export default function ExploreBuilders() {
   // Build first & second degree sets for graph
   const graphData = useMemo(() => {
     if (!currentUserProfile) return { first: [] as BuilderProfile[], second: [] as BuilderProfile[] };
-    // Now graph is based on authors liked via their posts (likedPosts -> map to authors)
-    const likedPostIds = new Set(currentUserProfile.likedPosts || []);
-    const likedAuthors = new Set<string>();
-    posts.forEach(p => { if (likedPostIds.has(p.id)) likedAuthors.add(p.authorId); });
-    const first = allProfiles.filter(p => likedAuthors.has(p.id));
-    const secondAuthorIds = new Set<string>();
-    first.forEach(f => (f.likedPosts || []).forEach(lpId => {
-      const post = posts.find(pp => pp.id === lpId);
-      if (post && post.authorId !== currentUserProfile.id && !likedAuthors.has(post.authorId)) secondAuthorIds.add(post.authorId);
+    // First ring: people the current user has liked (person-level likes)
+    const likedPeople = new Set(currentUserProfile.liked || []);
+    const first = allProfiles.filter(p => likedPeople.has(p.id));
+    // Second ring: people liked by first-ring users, excluding me and already-liked
+    const secondIds = new Set<string>();
+    first.forEach(f => (f.liked || []).forEach(pid => {
+      if (pid !== currentUserProfile.id && !likedPeople.has(pid)) secondIds.add(pid);
     }));
-    const second = allProfiles.filter(p => secondAuthorIds.has(p.id));
+    const second = allProfiles.filter(p => secondIds.has(p.id));
     return { first, second };
-  }, [currentUserProfile, allProfiles, posts]);
+  }, [currentUserProfile, allProfiles]);
 
   // Radial layout helpers (adaptive multi-ring)
   const renderGraph = () => {
@@ -704,22 +702,11 @@ export default function ExploreBuilders() {
         }
       }
 
-      // 3. First -> second (depth 1) both directions (if either liked the other)
-      // Our graph construction logic earlier promotes authors (profiles) to second ring when
-      // they are authors of posts liked by first-ring authors (via their likedPosts).
-      // So we reconstruct that linkage: for each first ring profile f, look at its likedPosts,
-      // find those posts' authors that live in secondRingNodes, and create edges.
-      const postsById: Record<string, PostItem> = {};
-      posts.forEach(p => { postsById[p.id] = p; });
+      // 3. First <-> Second (depth 1): connect if there is a person-level like either direction
       secondRingNodes.forEach(sec => {
         first.forEach(f => {
-          const likedPostIds = f.likedPosts || [];
-          for (let lpId of likedPostIds) {
-            const post = postsById[lpId];
-            if (post && post.authorId === sec.id) {
-              addEdge(f.id, sec.id, nodeCenter(f.id), nodeCenter(sec.id), 1, 'edge-s2');
-              break; // one edge per pair is enough
-            }
+          if ((f.liked||[]).includes(sec.id) || (sec.liked||[]).includes(f.id)) {
+            addEdge(f.id, sec.id, nodeCenter(f.id), nodeCenter(sec.id), 1, 'edge-s2');
           }
         });
       });
