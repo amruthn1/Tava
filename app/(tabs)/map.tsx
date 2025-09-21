@@ -265,7 +265,7 @@ export default function MapScreen() {
     if (typeof latitude === "number" && typeof longitude === "number" && !isNaN(latitude) && !isNaN(longitude)) {
       setUserLocation([longitude, latitude]);
       if (!initialCameraSet && cameraRef.current) {
-        cameraRef.current.setCamera({ centerCoordinate: [longitude, latitude], zoomLevel: 18, pitch: 0, animationDuration: 0 });
+        cameraRef.current.setCamera({ centerCoordinate: [longitude, latitude], zoomLevel: 16, pitch: 0, animationDuration: 0 });
         setInitialCameraSet(true);
       }
     }
@@ -273,7 +273,7 @@ export default function MapScreen() {
 
   const handleRecenter = () => {
     if (cameraRef.current && userLocation) {
-      cameraRef.current.setCamera({ centerCoordinate: userLocation, zoomLevel: 18, pitch: 0, bearing: 0, animationDuration: 100 });
+      cameraRef.current.setCamera({ centerCoordinate: userLocation, zoomLevel: 16, pitch: 0, bearing: 0, animationDuration: 100 });
     }
   };
 
